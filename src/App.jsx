@@ -1,17 +1,15 @@
 // ============================================================
-// HANDWERKER ZEITERFASSUNG v2
-// - Mitarbeiter & Baustellen live aus Controlling (readonly)
-// - Vorher/Nachher Fotos
-// - Genehmigen → Verbuchen (2-Stufen-Schutz)
+// HANDWERKER ZEITERFASSUNG v3
+// - Login mit Benutzername + Passwort
+// - Verwaltung über Controlling app_users
+// - Jeder sieht nur seine eigenen Einträge
+// - Admin sieht alles
 // ============================================================
 
 import { useState, useEffect, useCallback } from "react";
 
-// ── Neue App (Handwerker-Daten, Einträge, Fotos) ─────────────
 const APP_URL  = "https://syhjjuewkjjihxwiexmz.supabase.co";
 const APP_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5aGpqdWV3a2pqaWh4d2lleG16Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1MTk2NDYsImV4cCI6MjA5MzA5NTY0Nn0.9A-GrkU72IZ3uxkypX5GttN4EXNv46aX4uOY4wUmfaE";
-
-// ── Controlling (NUR LESEN: employees, baustellen | SCHREIBEN: nur nach Bestätigung) ──
 const CTRL_URL = "https://uclsqnpqvphdbeutzzuu.supabase.co";
 const CTRL_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjbHNxbnBxdnBoZGJldXR6enV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxODUzNjQsImV4cCI6MjA4Nzc2MTM2NH0.qpWW_Bx4Lddkf3YEPeVwv0yRU_leRwakojcdfGBELs4";
 
@@ -29,7 +27,7 @@ const ctrlRead = async (path) => {
   const res = await fetch(`${CTRL_URL}/rest/v1/${path}`, {
     headers: { apikey: CTRL_KEY, Authorization: `Bearer ${CTRL_KEY}`, "Content-Type": "application/json" },
   });
-  if (!res.ok) throw new Error("Controlling Lesefehler");
+  if (!res.ok) throw new Error("Fehler beim Laden");
   return res.json();
 };
 
@@ -39,13 +37,13 @@ const ctrlWrite = async (path, body, options = {}) => {
     headers: { apikey: CTRL_KEY, Authorization: `Bearer ${CTRL_KEY}`, "Content-Type": "application/json", Prefer: "return=representation" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "Controlling Schreibfehler"); }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "Fehler"); }
   return res.status === 204 ? null : res.json();
 };
 
-const uploadFoto = async (file, mitarbeiterId) => {
+const uploadFoto = async (file, userId) => {
   const ext = file.name.split(".").pop();
-  const path = `${mitarbeiterId}/${Date.now()}.${ext}`;
+  const path = `${userId}/${Date.now()}.${ext}`;
   const res = await fetch(`${APP_URL}/storage/v1/object/fotos/${path}`, {
     method: "POST",
     headers: { apikey: APP_KEY, Authorization: `Bearer ${APP_KEY}`, "Content-Type": file.type },
@@ -55,96 +53,152 @@ const uploadFoto = async (file, mitarbeiterId) => {
   return `${APP_URL}/storage/v1/object/public/fotos/${path}`;
 };
 
+// ── Session ───────────────────────────────────────────────────
+const SESSION_KEY = "handwerker_v3_session";
+const saveSession = (u) => localStorage.setItem(SESSION_KEY, JSON.stringify(u));
+const loadSession = () => { try { const s = localStorage.getItem(SESSION_KEY); return s ? JSON.parse(s) : null; } catch { return null; } };
+const clearSession = () => localStorage.removeItem(SESSION_KEY);
+
 // ── Konstanten ────────────────────────────────────────────────
 const TYP = {
-  baustelle: { label: "Baustelle",  icon: "🏗️", color: "#e67e22" },
-  ticket:    { label: "Ticket",     icon: "🎫", color: "#3498db" },
-  dguv:      { label: "DGUV",       icon: "🦺", color: "#27ae60" },
-  sonstiges: { label: "Sonstiges",  icon: "📋", color: "#8e44ad" },
+  baustelle: { label: "Baustelle", icon: "🏗️", color: "#e67e22" },
+  ticket:    { label: "Ticket",    icon: "🎫", color: "#3498db" },
+  dguv:      { label: "DGUV",      icon: "🦺", color: "#27ae60" },
+  sonstiges: { label: "Sonstiges", icon: "📋", color: "#8e44ad" },
 };
 const ST = {
-  offen:      { label: "Offen",      bg: "#fff3cd", color: "#856404" },
-  genehmigt:  { label: "Genehmigt",  bg: "#d1eddb", color: "#0f5132" },
-  abgelehnt:  { label: "Abgelehnt",  bg: "#f8d7da", color: "#842029" },
-  verbucht:   { label: "Verbucht ✓", bg: "#cfe2ff", color: "#084298" },
+  offen:     { label: "Offen",      bg: "#fff3cd", color: "#856404" },
+  genehmigt: { label: "Genehmigt",  bg: "#d1eddb", color: "#0f5132" },
+  abgelehnt: { label: "Abgelehnt",  bg: "#f8d7da", color: "#842029" },
+  verbucht:  { label: "Verbucht ✓", bg: "#cfe2ff", color: "#084298" },
 };
-
 const inp = { width: "100%", padding: "12px 14px", border: "1.5px solid #e8e6e0", borderRadius: "10px", fontSize: "15px", background: "#fff", color: "#1a1a1a", boxSizing: "border-box", fontFamily: "inherit", outline: "none", marginTop: "6px" };
 const lbl = { fontSize: "13px", fontWeight: "600", color: "#444", display: "block", textTransform: "uppercase", letterSpacing: "0.4px" };
 
-// ── Login ─────────────────────────────────────────────────────
+// ── Login Screen ──────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [list, setList] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState("");
+  const [showPw, setShowPw]     = useState(false);
 
-  useEffect(() => {
-    // Lese Mitarbeiter live aus Controlling (nur lesend!)
-    ctrlRead("employees?aktiv=eq.true&order=name.asc&select=id,name,gewerk,kuerzel")
-      .then(data => {
-        // Admin wird separat hinzugefügt – kein Controlling-Mitarbeiter als Admin
-        setList(data);
-      })
-      .catch(() => setError("Mitarbeiter konnten nicht geladen werden"))
-      .finally(() => setLoading(false));
-  }, []);
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!username.trim() || !password.trim()) return setError("Bitte alle Felder ausfüllen");
+    setLoading(true); setError("");
+    try {
+      // Suche in app_users nach name (Benutzername) + aktiv
+      const users = await ctrlRead(
+        `app_users?name=eq.${encodeURIComponent(username.trim())}&is_active=eq.true&select=id,name,email,password_hash,is_admin`
+      );
+      if (!users || users.length === 0) {
+        setError("Benutzername nicht gefunden oder deaktiviert");
+        return;
+      }
+      const user = users[0];
+      if (user.password_hash !== password) {
+        setError("Passwort falsch");
+        return;
+      }
+
+      // Employee ID aus Controlling holen (per Name-Match)
+      let controlling_employee_id = null;
+      try {
+        const emps = await ctrlRead(`employees?name=eq.${encodeURIComponent(user.name)}&aktiv=eq.true&select=id`);
+        if (emps?.length > 0) controlling_employee_id = emps[0].id;
+      } catch {}
+
+      const session = {
+        id: user.id,
+        name: user.name,
+        rolle: user.is_admin ? "admin" : "handwerker",
+        controlling_employee_id,
+      };
+      saveSession(session);
+      onLogin(session);
+    } catch (err) {
+      setError("Fehler: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "#f5f4f0", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", fontFamily: "'DM Sans', sans-serif" }}>
-      <div style={{ width: "100%", maxWidth: "420px" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+      <div style={{ width: "100%", maxWidth: "380px" }}>
         <div style={{ textAlign: "center", marginBottom: "36px" }}>
-          <div style={{ fontSize: "44px", marginBottom: "10px" }}>⚒️</div>
+          <div style={{ fontSize: "48px", marginBottom: "12px" }}>⚒️</div>
           <h1 style={{ margin: 0, fontSize: "26px", fontWeight: "700", color: "#1a1a1a", letterSpacing: "-0.5px" }}>Zeiterfassung</h1>
-          <p style={{ margin: "8px 0 0", color: "#666", fontSize: "15px" }}>Wähle deinen Namen</p>
+          <p style={{ margin: "8px 0 0", color: "#888", fontSize: "14px" }}>Bitte einloggen um fortzufahren</p>
         </div>
 
-        {error && <div style={{ background: "#f8d7da", color: "#842029", padding: "12px", borderRadius: "10px", marginBottom: "16px", fontSize: "14px" }}>⚠️ {error}</div>}
-
-        {loading ? <p style={{ textAlign: "center", color: "#999" }}>Lade Mitarbeiter...</p> : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {/* Admin Login zuerst */}
-            <button onClick={() => onLogin({ id: "admin", name: "Chef / Admin", rolle: "admin" })}
-              style={{ padding: "14px 18px", background: "#1a1a1a", border: "2px solid #1a1a1a", borderRadius: "12px", cursor: "pointer", display: "flex", alignItems: "center", gap: "12px", fontSize: "15px", fontWeight: "600", color: "#fff", fontFamily: "inherit" }}>
-              <span style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#d4612a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", fontWeight: "700", flexShrink: 0 }}>A</span>
-              Chef / Admin
-              <span style={{ marginLeft: "auto", fontSize: "11px", background: "#d4612a", padding: "3px 8px", borderRadius: "20px" }}>Admin</span>
-            </button>
-
-            <div style={{ height: "1px", background: "#e8e6e0", margin: "6px 0" }} />
-
-            {list.map(m => (
-              <button key={m.id} onClick={() => onLogin({ ...m, rolle: "handwerker" })}
-                style={{ padding: "14px 18px", background: "#fff", border: "2px solid #e8e6e0", borderRadius: "12px", cursor: "pointer", display: "flex", alignItems: "center", gap: "12px", fontSize: "15px", fontWeight: "500", color: "#1a1a1a", fontFamily: "inherit", transition: "border-color 0.15s" }}
-                onMouseEnter={e => e.currentTarget.style.borderColor = "#d4612a"}
-                onMouseLeave={e => e.currentTarget.style.borderColor = "#e8e6e0"}>
-                <span style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#d4612a22", color: "#d4612a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", fontWeight: "700", flexShrink: 0 }}>
-                  {m.name.charAt(0)}
-                </span>
-                <span style={{ flex: 1, textAlign: "left" }}>{m.name}</span>
-                <span style={{ fontSize: "12px", color: "#999" }}>{m.gewerk}</span>
-              </button>
-            ))}
+        <form onSubmit={handleLogin} style={{ background: "#fff", borderRadius: "18px", padding: "28px 24px", border: "1px solid #e8e6e0", display: "flex", flexDirection: "column", gap: "16px", boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}>
+          <div>
+            <label style={lbl}>Benutzername</label>
+            <input
+              type="text" value={username}
+              onChange={e => setUsername(e.target.value)}
+              placeholder="Dein Benutzername"
+              autoCapitalize="off" autoCorrect="off" autoComplete="username"
+              style={inp}
+            />
           </div>
-        )}
+          <div>
+            <label style={lbl}>Passwort</label>
+            <div style={{ position: "relative" }}>
+              <input
+                type={showPw ? "text" : "password"}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                style={{ ...inp, paddingRight: "46px" }}
+              />
+              <button type="button" onClick={() => setShowPw(v => !v)}
+                style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: "18px", paddingTop: "6px" }}>
+                {showPw ? "🙈" : "👁️"}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div style={{ background: "#fef2f2", color: "#842029", padding: "10px 14px", borderRadius: "10px", fontSize: "13px", border: "1px solid #fecaca" }}>
+              ⚠️ {error}
+            </div>
+          )}
+
+          <button type="submit" disabled={loading}
+            style={{ padding: "15px", background: loading ? "#ccc" : "#1a1a1a", color: "#fff", border: "none", borderRadius: "12px", fontSize: "16px", fontWeight: "700", cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit", marginTop: "4px", transition: "background 0.15s" }}>
+            {loading ? "Wird geprüft..." : "Einloggen →"}
+          </button>
+        </form>
+
+        <p style={{ textAlign: "center", marginTop: "20px", fontSize: "12px", color: "#bbb" }}>
+          Zugangsdaten werden vom Admin vergeben
+        </p>
       </div>
     </div>
   );
 }
 
 // ── Neuer Eintrag ─────────────────────────────────────────────
-function NeuerEintrag({ mitarbeiter, onSuccess, onCancel }) {
+function NeuerEintrag({ user, onSuccess, onCancel }) {
   const [baustellen, setBaustellen] = useState([]);
-  const [form, setForm] = useState({ datum: new Date().toISOString().split("T")[0], typ: "", baustelle_id: "", beschreibung: "", stunden: "", material: "", material_kosten: "" });
-  const [fotos, setFotos] = useState({ vorher: null, nachher: null });
+  const [form, setForm] = useState({
+    datum: new Date().toISOString().split("T")[0],
+    typ: "", baustelle_id: "", beschreibung: "",
+    stunden: "", material: "", material_kosten: "",
+  });
+  const [fotos, setFotos]     = useState({ vorher: null, nachher: null });
   const [previews, setPreviews] = useState({ vorher: null, nachher: null });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState("");
 
   useEffect(() => {
-    // Lese Baustellen live aus Controlling – alle aktiven
-    ctrlRead("baustellen?status=not.eq.abgeschlossen&status=not.eq.abgerechnet&order=name.asc&select=id,name,adresse,status")
-      .then(setBaustellen)
-      .catch(() => setBaustellen([]));
+    ctrlRead("baustellen?status=not.eq.abgeschlossen&status=not.eq.abgerechnet&order=name.asc&select=id,name,adresse")
+      .then(setBaustellen).catch(() => setBaustellen([]));
   }, []);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -162,24 +216,20 @@ function NeuerEintrag({ mitarbeiter, onSuccess, onCancel }) {
     setSaving(true); setError("");
     try {
       let foto_vorher = null, foto_nachher = null;
-      if (fotos.vorher) foto_vorher = await uploadFoto(fotos.vorher, mitarbeiter.id);
-      if (fotos.nachher) foto_nachher = await uploadFoto(fotos.nachher, mitarbeiter.id);
-
+      if (fotos.vorher)  foto_vorher  = await uploadFoto(fotos.vorher,  user.id);
+      if (fotos.nachher) foto_nachher = await uploadFoto(fotos.nachher, user.id);
       await appApi("zeiteintraege", {
         method: "POST",
         body: JSON.stringify({
-          // Wir speichern controlling_employee_id damit wir später verknüpfen können
-          controlling_employee_id: mitarbeiter.id,
-          mitarbeiter_name: mitarbeiter.name,
-          datum: form.datum,
-          typ: form.typ,
+          controlling_employee_id: user.controlling_employee_id,
+          mitarbeiter_name: user.name,
           controlling_baustelle_id: form.baustelle_id || null,
+          datum: form.datum, typ: form.typ,
           beschreibung: form.beschreibung || null,
           stunden: Number(form.stunden),
           material: form.material || null,
           material_kosten: form.material_kosten ? Number(form.material_kosten) : null,
-          foto_vorher,
-          foto_nachher,
+          foto_vorher, foto_nachher,
           status: "offen",
         }),
       });
@@ -194,7 +244,6 @@ function NeuerEintrag({ mitarbeiter, onSuccess, onCancel }) {
         <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "22px", color: "#666", padding: 0 }}>←</button>
         <h2 style={{ margin: 0, fontSize: "18px", fontWeight: "700", color: "#1a1a1a" }}>Neuer Eintrag</h2>
       </div>
-
       <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "18px" }}>
         {/* Typ */}
         <div>
@@ -213,10 +262,8 @@ function NeuerEintrag({ mitarbeiter, onSuccess, onCancel }) {
             ))}
           </div>
         </div>
-
         {/* Datum */}
         <div><label style={lbl}>Datum</label><input type="date" value={form.datum} onChange={e => set("datum", e.target.value)} style={inp} /></div>
-
         {/* Baustelle */}
         {form.typ === "baustelle" && (
           <div>
@@ -227,41 +274,32 @@ function NeuerEintrag({ mitarbeiter, onSuccess, onCancel }) {
             </select>
           </div>
         )}
-
         {/* Beschreibung */}
         <div>
           <label style={lbl}>Beschreibung <span style={{ color: "#999", fontWeight: 400 }}>(optional)</span></label>
           <textarea value={form.beschreibung} onChange={e => set("beschreibung", e.target.value)} placeholder="Was genau wurde gemacht?" rows={3} style={{ ...inp, resize: "vertical" }} />
         </div>
-
         {/* Stunden */}
         <div><label style={lbl}>Stunden</label><input type="number" value={form.stunden} onChange={e => set("stunden", e.target.value)} placeholder="z.B. 3.5" step="0.25" min="0.25" max="24" style={inp} /></div>
-
         {/* Material */}
         <div>
           <label style={lbl}>Material <span style={{ color: "#999", fontWeight: 400 }}>(optional)</span></label>
-          <input type="text" value={form.material} onChange={e => set("material", e.target.value)} placeholder="z.B. Kabel 10m, Schrauben..." style={inp} />
+          <input type="text" value={form.material} onChange={e => set("material", e.target.value)} placeholder="z.B. Kabel 10m..." style={inp} />
         </div>
         {form.material && (
           <div><label style={lbl}>Materialkosten (€)</label><input type="number" value={form.material_kosten} onChange={e => set("material_kosten", e.target.value)} placeholder="z.B. 45.00" step="0.01" style={inp} /></div>
         )}
-
-        {/* Vorher/Nachher Fotos (nur bei Baustelle) */}
-        {form.typ === "baustelle" && (
+        {/* Fotos */}
+        {form.typ === "baustelle" ? (
           <div>
             <label style={lbl}>Dokumentation Fotos</label>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginTop: "8px" }}>
               {["vorher", "nachher"].map(typ => (
                 <div key={typ}>
-                  <label style={{
-                    display: "flex", flexDirection: "column", alignItems: "center", gap: "6px",
-                    padding: "14px 10px", border: `2px dashed ${previews[typ] ? "#27ae60" : "#d0cec8"}`,
-                    borderRadius: "12px", cursor: "pointer", color: "#666", fontSize: "13px",
-                    background: previews[typ] ? "#f0faf4" : "#fafaf8", textAlign: "center",
-                  }}>
+                  <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px", padding: "14px 10px", border: `2px dashed ${previews[typ] ? "#27ae60" : "#d0cec8"}`, borderRadius: "12px", cursor: "pointer", fontSize: "13px", background: previews[typ] ? "#f0faf4" : "#fafaf8", textAlign: "center" }}>
                     <span style={{ fontSize: "24px" }}>{typ === "vorher" ? "📷" : "✅"}</span>
                     <span style={{ fontWeight: "600", textTransform: "capitalize" }}>{typ === "vorher" ? "Vorher" : "Nachher"}</span>
-                    {previews[typ] ? <span style={{ color: "#27ae60", fontSize: "12px" }}>Foto ✓</span> : <span style={{ fontSize: "11px", color: "#aaa" }}>Foto hochladen</span>}
+                    {previews[typ] ? <span style={{ color: "#27ae60", fontSize: "12px" }}>✓</span> : <span style={{ fontSize: "11px", color: "#aaa" }}>Foto hochladen</span>}
                     <input type="file" accept="image/*" capture="environment" onChange={e => handleFoto(typ, e.target.files[0])} style={{ display: "none" }} />
                   </label>
                   {previews[typ] && <img src={previews[typ]} alt={typ} style={{ width: "100%", borderRadius: "8px", marginTop: "6px", height: "100px", objectFit: "cover" }} />}
@@ -269,10 +307,7 @@ function NeuerEintrag({ mitarbeiter, onSuccess, onCancel }) {
               ))}
             </div>
           </div>
-        )}
-
-        {/* Sonstiges Foto */}
-        {form.typ !== "baustelle" && (
+        ) : (
           <div>
             <label style={lbl}>Foto / Beleg <span style={{ color: "#999", fontWeight: 400 }}>(optional)</span></label>
             <label style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 16px", border: "2px dashed #d0cec8", borderRadius: "12px", cursor: "pointer", color: "#666", fontSize: "14px", marginTop: "6px", background: "#fafaf8" }}>
@@ -284,7 +319,7 @@ function NeuerEintrag({ mitarbeiter, onSuccess, onCancel }) {
           </div>
         )}
 
-        {error && <div style={{ background: "#f8d7da", color: "#842029", padding: "12px 16px", borderRadius: "10px", fontSize: "14px" }}>⚠️ {error}</div>}
+        {error && <div style={{ background: "#fef2f2", color: "#842029", padding: "12px 16px", borderRadius: "10px", fontSize: "14px", border: "1px solid #fecaca" }}>⚠️ {error}</div>}
 
         <button onClick={handleSubmit} disabled={saving} style={{ padding: "16px", background: saving ? "#ccc" : "#d4612a", color: "#fff", border: "none", borderRadius: "12px", fontSize: "16px", fontWeight: "700", cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
           {saving ? "Wird gespeichert..." : "Eintrag einreichen ✓"}
@@ -296,19 +331,19 @@ function NeuerEintrag({ mitarbeiter, onSuccess, onCancel }) {
 
 // ── Mitarbeiter Dashboard ─────────────────────────────────────
 function MitarbeiterDashboard({ user }) {
-  const [view, setView] = useState("list");
+  const [view, setView]         = useState("list");
   const [eintraege, setEintraege] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]   = useState(true);
 
   const load = useCallback(() => {
     setLoading(true);
-    appApi(`zeiteintraege?controlling_employee_id=eq.${user.id}&order=erstellt_am.desc&limit=60`)
+    appApi(`zeiteintraege?controlling_employee_id=eq.${user.controlling_employee_id}&order=erstellt_am.desc&limit=60`)
       .then(setEintraege).finally(() => setLoading(false));
-  }, [user.id]);
+  }, [user.controlling_employee_id]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (view === "neu") return <NeuerEintrag mitarbeiter={user} onSuccess={() => { load(); setView("list"); }} onCancel={() => setView("list")} />;
+  if (view === "neu") return <NeuerEintrag user={user} onSuccess={() => { load(); setView("list"); }} onCancel={() => setView("list")} />;
 
   const offene = eintraege.filter(e => e.status === "offen").length;
   return (
@@ -338,12 +373,13 @@ function MitarbeiterDashboard({ user }) {
 // ── Admin Dashboard ───────────────────────────────────────────
 function AdminDashboard() {
   const [eintraege, setEintraege] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("offen");
+  const [loading, setLoading]     = useState(true);
+  const [filter, setFilter]       = useState("offen");
   const [kommentar, setKommentar] = useState({});
-  const [verbuchenId, setVerbuchenId] = useState(null);
+  const [verbuchenId, setVerbuchenId]     = useState(null);
   const [verbuchenLoading, setVerbuchenLoading] = useState(false);
-  const [verbuchenError, setVerbuchenError] = useState("");
+  const [verbuchenError, setVerbuchenError]     = useState("");
+  const [baustellenMap, setBaustellenMap] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -352,6 +388,11 @@ function AdminDashboard() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    ctrlRead("baustellen?select=id,name").then(data => {
+      if (data) setBaustellenMap(Object.fromEntries(data.map(b => [b.id, b.name])));
+    });
+  }, []);
 
   const handleAction = async (id, status) => {
     await appApi(`zeiteintraege?id=eq.${id}`, {
@@ -362,51 +403,43 @@ function AdminDashboard() {
     load();
   };
 
-  // ── VERBUCHEN: schreibt ins Controlling (nur nach expliziter Bestätigung) ──
-  const handleVerbuchen = async (eintrag) => {
-    setVerbuchenLoading(true);
-    setVerbuchenError("");
+  const handleVerbuchen = async () => {
+    const e = eintraege.find(x => x.id === verbuchenId);
+    if (!e) return;
+    setVerbuchenLoading(true); setVerbuchenError("");
     try {
-      if (eintrag.typ === "baustelle" && eintrag.controlling_baustelle_id) {
-        // → bs_stundeneintraege
-        await ctrlWrite("bs_stundeneintraege", {
-          baustelle_id: eintrag.controlling_baustelle_id,
-          mitarbeiter_id: eintrag.controlling_employee_id,
-          datum: eintrag.datum,
-          stunden: eintrag.stunden,
-          beschreibung: eintrag.beschreibung || `App-Eintrag: ${eintrag.mitarbeiter_name}`,
-        });
-        // → bs_fotos wenn vorhanden
-        if (eintrag.foto_vorher) {
-          await ctrlWrite("bs_fotos", { baustelle_id: eintrag.controlling_baustelle_id, url: eintrag.foto_vorher, kategorie: "vorher", datum: eintrag.datum, hochgeladen_von: eintrag.controlling_employee_id, beschreibung: `Vorher – ${eintrag.mitarbeiter_name}` });
-        }
-        if (eintrag.foto_nachher) {
-          await ctrlWrite("bs_fotos", { baustelle_id: eintrag.controlling_baustelle_id, url: eintrag.foto_nachher, kategorie: "nachher", datum: eintrag.datum, hochgeladen_von: eintrag.controlling_employee_id, beschreibung: `Nachher – ${eintrag.mitarbeiter_name}` });
-        }
-      } else if (eintrag.typ === "dguv") {
-        // → interne_stunden
-        await ctrlWrite("interne_stunden", { employee_id: eintrag.controlling_employee_id, datum: eintrag.datum, stunden: eintrag.stunden, beschreibung: `DGUV – ${eintrag.beschreibung || ""}` });
-      } else if (eintrag.typ === "sonstiges") {
-        // → interne_stunden
-        await ctrlWrite("interne_stunden", { employee_id: eintrag.controlling_employee_id, datum: eintrag.datum, stunden: eintrag.stunden, beschreibung: eintrag.beschreibung || "Sonstiges" });
-      } else if (eintrag.typ === "ticket") {
-        // → ticket_worklogs (ohne ticket_id, da wir keine haben – Beschreibung als Hinweis)
-        await ctrlWrite("interne_stunden", { employee_id: eintrag.controlling_employee_id, datum: eintrag.datum, stunden: eintrag.stunden, beschreibung: `Ticket – ${eintrag.beschreibung || ""}` });
+      if (e.typ === "baustelle" && e.controlling_baustelle_id) {
+        const { error: e1 } = await (async () => {
+          const r = await fetch(`${CTRL_URL}/rest/v1/bs_stundeneintraege`, {
+            method: "POST",
+            headers: { apikey: CTRL_KEY, Authorization: `Bearer ${CTRL_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+            body: JSON.stringify({ baustelle_id: e.controlling_baustelle_id, mitarbeiter_id: e.controlling_employee_id, datum: e.datum, stunden: e.stunden, beschreibung: e.beschreibung || `App: ${e.mitarbeiter_name}` }),
+          });
+          return r.ok ? {} : { error: await r.json() };
+        })();
+        if (e1) throw new Error("Fehler beim Schreiben in bs_stundeneintraege");
+        if (e.foto_vorher) await ctrlWrite("bs_fotos", { baustelle_id: e.controlling_baustelle_id, url: e.foto_vorher, kategorie: "vorher", datum: e.datum, hochgeladen_von: e.controlling_employee_id, beschreibung: `Vorher – ${e.mitarbeiter_name}` });
+        if (e.foto_nachher) await ctrlWrite("bs_fotos", { baustelle_id: e.controlling_baustelle_id, url: e.foto_nachher, kategorie: "nachher", datum: e.datum, hochgeladen_von: e.controlling_employee_id, beschreibung: `Nachher – ${e.mitarbeiter_name}` });
+      } else {
+        const prefix = e.typ === "ticket" ? "Ticket" : e.typ === "dguv" ? "DGUV" : "Sonstiges";
+        await ctrlWrite("interne_stunden", { employee_id: e.controlling_employee_id, datum: e.datum, stunden: e.stunden, beschreibung: `${prefix} – ${e.beschreibung || e.mitarbeiter_name}` });
       }
-      // Status auf verbucht setzen
-      await appApi(`zeiteintraege?id=eq.${eintrag.id}`, { method: "PATCH", body: JSON.stringify({ status: "verbucht", bearbeitet_am: new Date().toISOString() }) });
+      await appApi(`zeiteintraege?id=eq.${e.id}`, { method: "PATCH", body: JSON.stringify({ status: "verbucht", bearbeitet_am: new Date().toISOString() }) });
       setVerbuchenId(null);
       load();
-    } catch (e) { setVerbuchenError(e.message); }
+    } catch (err) { setVerbuchenError(err.message); }
     finally { setVerbuchenLoading(false); }
   };
 
   const gefiltert = eintraege.filter(e => e.status === filter);
-  const counts = { offen: eintraege.filter(e => e.status === "offen").length, genehmigt: eintraege.filter(e => e.status === "genehmigt").length };
+  const counts = {
+    offen:     eintraege.filter(e => e.status === "offen").length,
+    genehmigt: eintraege.filter(e => e.status === "genehmigt").length,
+  };
 
   return (
     <div style={{ paddingBottom: "80px", fontFamily: "'DM Sans', sans-serif" }}>
-      {/* Verbuchen Bestätigungs-Modal */}
+      {/* Verbuchen Modal */}
       {verbuchenId && (() => {
         const e = eintraege.find(x => x.id === verbuchenId);
         if (!e) return null;
@@ -414,18 +447,17 @@ function AdminDashboard() {
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
             <div style={{ background: "#fff", borderRadius: "20px 20px 0 0", padding: "28px 24px 40px", width: "100%", maxWidth: "480px" }}>
               <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: "700", color: "#1a1a1a" }}>⚠️ Ins Controlling verbuchen?</h3>
-              <p style={{ margin: "0 0 16px", color: "#555", fontSize: "14px", lineHeight: "1.5" }}>
-                Dieser Eintrag wird <strong>dauerhaft</strong> in dein Controlling-System geschrieben. Das kann nicht rückgängig gemacht werden.
-              </p>
+              <p style={{ margin: "0 0 16px", color: "#555", fontSize: "14px", lineHeight: "1.5" }}>Wird <strong>dauerhaft</strong> in dein Controlling geschrieben. Nicht rückgängig machbar.</p>
               <div style={{ background: "#f5f4f0", borderRadius: "10px", padding: "14px", marginBottom: "20px", fontSize: "14px", color: "#333" }}>
                 <div><strong>{e.mitarbeiter_name}</strong> · {e.datum}</div>
                 <div>{TYP[e.typ]?.label} · {e.stunden}h</div>
+                {e.controlling_baustelle_id && <div style={{ color: "#666", marginTop: "4px" }}>📍 {baustellenMap[e.controlling_baustelle_id] || "Baustelle"}</div>}
                 {e.beschreibung && <div style={{ color: "#666", marginTop: "4px" }}>{e.beschreibung}</div>}
               </div>
-              {verbuchenError && <div style={{ background: "#f8d7da", color: "#842029", padding: "10px", borderRadius: "8px", marginBottom: "14px", fontSize: "13px" }}>❌ {verbuchenError}</div>}
+              {verbuchenError && <div style={{ background: "#fef2f2", color: "#842029", padding: "10px", borderRadius: "8px", marginBottom: "14px", fontSize: "13px" }}>❌ {verbuchenError}</div>}
               <div style={{ display: "flex", gap: "10px" }}>
                 <button onClick={() => { setVerbuchenId(null); setVerbuchenError(""); }} style={{ flex: 1, padding: "14px", background: "#f5f4f0", border: "none", borderRadius: "12px", fontSize: "15px", fontWeight: "600", cursor: "pointer", fontFamily: "inherit" }}>Abbrechen</button>
-                <button onClick={() => handleVerbuchen(e)} disabled={verbuchenLoading} style={{ flex: 1, padding: "14px", background: verbuchenLoading ? "#ccc" : "#084298", color: "#fff", border: "none", borderRadius: "12px", fontSize: "15px", fontWeight: "700", cursor: verbuchenLoading ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                <button onClick={handleVerbuchen} disabled={verbuchenLoading} style={{ flex: 1, padding: "14px", background: verbuchenLoading ? "#ccc" : "#084298", color: "#fff", border: "none", borderRadius: "12px", fontSize: "15px", fontWeight: "700", cursor: verbuchenLoading ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
                   {verbuchenLoading ? "Wird verbucht..." : "Jetzt verbuchen ✓"}
                 </button>
               </div>
@@ -454,8 +486,8 @@ function AdminDashboard() {
             fontFamily: "inherit",
           }}>
             {ST[s]?.label || s}
-            {(s === "offen" && counts.offen > 0) && <span style={{ marginLeft: "6px", background: "#d4612a", color: "#fff", borderRadius: "10px", padding: "1px 7px", fontSize: "11px" }}>{counts.offen}</span>}
-            {(s === "genehmigt" && counts.genehmigt > 0) && <span style={{ marginLeft: "6px", background: "#0f5132", color: "#fff", borderRadius: "10px", padding: "1px 7px", fontSize: "11px" }}>{counts.genehmigt}</span>}
+            {s === "offen" && counts.offen > 0 && <span style={{ marginLeft: "6px", background: "#d4612a", color: "#fff", borderRadius: "10px", padding: "1px 7px", fontSize: "11px" }}>{counts.offen}</span>}
+            {s === "genehmigt" && counts.genehmigt > 0 && <span style={{ marginLeft: "6px", background: "#0f5132", color: "#fff", borderRadius: "10px", padding: "1px 7px", fontSize: "11px" }}>{counts.genehmigt}</span>}
           </button>
         ))}
       </div>
@@ -476,31 +508,18 @@ function AdminDashboard() {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
                 <Pill color={TYP[e.typ]?.color}>{TYP[e.typ]?.label}</Pill>
-                <Pill color={e.status === "verbucht" ? "#084298" : e.status === "genehmigt" ? "#0f5132" : "#666"}>{ST[e.status]?.label}</Pill>
+                {e.controlling_baustelle_id && baustellenMap[e.controlling_baustelle_id] && <Pill color="#666">{baustellenMap[e.controlling_baustelle_id]}</Pill>}
               </div>
               {e.beschreibung && <p style={{ margin: "6px 0", fontSize: "14px", color: "#444" }}>{e.beschreibung}</p>}
               {e.material && <p style={{ margin: "4px 0", fontSize: "13px", color: "#666" }}>📦 {e.material}{e.material_kosten ? ` — ${e.material_kosten}€` : ""}</p>}
-              {/* Vorher/Nachher Fotos */}
               {(e.foto_vorher || e.foto_nachher) && (
                 <div style={{ display: "grid", gridTemplateColumns: e.foto_vorher && e.foto_nachher ? "1fr 1fr" : "1fr", gap: "8px", marginTop: "10px" }}>
-                  {e.foto_vorher && (
-                    <div>
-                      <div style={{ fontSize: "11px", fontWeight: "600", color: "#666", marginBottom: "4px" }}>VORHER</div>
-                      <img src={e.foto_vorher} alt="Vorher" style={{ width: "100%", borderRadius: "8px", height: "120px", objectFit: "cover" }} />
-                    </div>
-                  )}
-                  {e.foto_nachher && (
-                    <div>
-                      <div style={{ fontSize: "11px", fontWeight: "600", color: "#27ae60", marginBottom: "4px" }}>NACHHER</div>
-                      <img src={e.foto_nachher} alt="Nachher" style={{ width: "100%", borderRadius: "8px", height: "120px", objectFit: "cover" }} />
-                    </div>
-                  )}
+                  {e.foto_vorher && <div><div style={{ fontSize: "11px", fontWeight: "600", color: "#666", marginBottom: "4px" }}>VORHER</div><img src={e.foto_vorher} alt="Vorher" style={{ width: "100%", borderRadius: "8px", height: "120px", objectFit: "cover" }} /></div>}
+                  {e.foto_nachher && <div><div style={{ fontSize: "11px", fontWeight: "600", color: "#27ae60", marginBottom: "4px" }}>NACHHER</div><img src={e.foto_nachher} alt="Nachher" style={{ width: "100%", borderRadius: "8px", height: "120px", objectFit: "cover" }} /></div>}
                 </div>
               )}
               {e.admin_kommentar && <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#666", fontStyle: "italic" }}>💬 {e.admin_kommentar}</p>}
             </div>
-
-            {/* Aktionen: offen → genehmigen/ablehnen */}
             {e.status === "offen" && (
               <div style={{ padding: "12px 16px", background: "#fafaf8", borderTop: "1px solid #f0ede8" }}>
                 <input placeholder="Kommentar (optional)..." value={kommentar[e.id] || ""} onChange={ev => setKommentar(k => ({ ...k, [e.id]: ev.target.value }))} style={{ ...inp, marginBottom: "10px", fontSize: "13px", padding: "8px 12px" }} />
@@ -510,8 +529,6 @@ function AdminDashboard() {
                 </div>
               </div>
             )}
-
-            {/* Aktionen: genehmigt → verbuchen (explizite Bestätigung!) */}
             {e.status === "genehmigt" && (
               <div style={{ padding: "12px 16px", background: "#f0faf4", borderTop: "1px solid #d1eddb" }}>
                 <button onClick={() => setVerbuchenId(e.id)} style={{ width: "100%", padding: "12px", background: "#084298", color: "#fff", border: "none", borderRadius: "10px", fontSize: "14px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit" }}>
@@ -526,33 +543,25 @@ function AdminDashboard() {
   );
 }
 
-// ── Shared ────────────────────────────────────────────────────
+// ── EintragCard (Mitarbeiter-Ansicht) ─────────────────────────
 function EintragCard({ e, onReload }) {
   const cfg = TYP[e.typ] || {}; const st = ST[e.status] || {};
   const [uploading, setUploading] = useState(false);
-  const [preview, setPreview] = useState(null);
-  const [done, setDone] = useState(false);
+  const [preview, setPreview]     = useState(null);
+  const [done, setDone]           = useState(false);
+  const kannNachher = e.typ === "baustelle" && !e.foto_nachher && e.status !== "verbucht";
 
-  const kannNachherFoto = e.typ === "baustelle" && !e.foto_nachher && e.status !== "verbucht";
-
-  const handleNachherFoto = async (file) => {
+  const handleNachher = async (file) => {
     if (!file) return;
     setPreview(URL.createObjectURL(file));
     setUploading(true);
     try {
-      const url = await uploadFoto(file, e.controlling_employee_id);
-      await appApi(`zeiteintraege?id=eq.${e.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ foto_nachher: url }),
-      });
+      const url = await uploadFoto(file, e.controlling_employee_id || "unknown");
+      await appApi(`zeiteintraege?id=eq.${e.id}`, { method: "PATCH", body: JSON.stringify({ foto_nachher: url }) });
       setDone(true);
       if (onReload) onReload();
-    } catch (err) {
-      alert("Fehler beim Hochladen: " + err.message);
-      setPreview(null);
-    } finally {
-      setUploading(false);
-    }
+    } catch (err) { alert("Fehler: " + err.message); setPreview(null); }
+    finally { setUploading(false); }
   };
 
   return (
@@ -561,37 +570,21 @@ function EintragCard({ e, onReload }) {
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <span style={{ fontSize: "22px" }}>{cfg.icon}</span>
           <div style={{ flex: 1 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontWeight: "600", fontSize: "14px", color: cfg.color }}>{cfg.label}</span>
-            </div>
+            <span style={{ fontWeight: "600", fontSize: "14px", color: cfg.color }}>{cfg.label}</span>
             <div style={{ fontSize: "13px", color: "#999", marginTop: "2px" }}>{new Date(e.datum).toLocaleDateString("de-DE")} · {e.stunden}h</div>
           </div>
           <span style={{ fontSize: "12px", padding: "4px 10px", borderRadius: "20px", background: st.bg, color: st.color, fontWeight: "500", whiteSpace: "nowrap" }}>{st.label}</span>
         </div>
         {e.beschreibung && <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#555" }}>{e.beschreibung}</p>}
-        {e.admin_kommentar && <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#888", fontStyle: "italic" }}>💬 {e.admin_kommentar}</p>}
-
-        {/* Vorhandene Fotos anzeigen */}
         {(e.foto_vorher || e.foto_nachher) && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "10px" }}>
-            {e.foto_vorher && (
-              <div>
-                <div style={{ fontSize: "10px", fontWeight: "700", color: "#666", marginBottom: "3px" }}>VORHER</div>
-                <img src={e.foto_vorher} alt="Vorher" style={{ width: "100%", borderRadius: "6px", height: "80px", objectFit: "cover" }} />
-              </div>
-            )}
-            {e.foto_nachher && (
-              <div>
-                <div style={{ fontSize: "10px", fontWeight: "700", color: "#27ae60", marginBottom: "3px" }}>NACHHER</div>
-                <img src={e.foto_nachher} alt="Nachher" style={{ width: "100%", borderRadius: "6px", height: "80px", objectFit: "cover" }} />
-              </div>
-            )}
+            {e.foto_vorher && <div><div style={{ fontSize: "10px", fontWeight: "700", color: "#666", marginBottom: "3px" }}>VORHER</div><img src={e.foto_vorher} alt="Vorher" style={{ width: "100%", borderRadius: "6px", height: "80px", objectFit: "cover" }} /></div>}
+            {e.foto_nachher && <div><div style={{ fontSize: "10px", fontWeight: "700", color: "#27ae60", marginBottom: "3px" }}>NACHHER</div><img src={e.foto_nachher} alt="Nachher" style={{ width: "100%", borderRadius: "6px", height: "80px", objectFit: "cover" }} /></div>}
           </div>
         )}
+        {e.admin_kommentar && <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#888", fontStyle: "italic" }}>💬 {e.admin_kommentar}</p>}
       </div>
-
-      {/* Nachher-Foto nachträglich hinzufügen */}
-      {kannNachherFoto && !done && (
+      {kannNachher && !done && (
         <div style={{ padding: "10px 16px 14px", borderTop: "1px solid #f0ede8", background: "#fafaf8" }}>
           {preview ? (
             <div>
@@ -604,20 +597,14 @@ function EintragCard({ e, onReload }) {
               <span style={{ fontSize: "18px" }}>✅</span>
               <div>
                 <div style={{ fontSize: "13px", fontWeight: "600", color: "#444" }}>Nachher-Foto hinzufügen</div>
-                <div style={{ fontSize: "11px", color: "#aaa" }}>Arbeit abgeschlossen? Foto machen</div>
+                <div style={{ fontSize: "11px", color: "#aaa" }}>Arbeit fertig? Foto machen</div>
               </div>
-              <input type="file" accept="image/*" capture="environment" onChange={ev => handleNachherFoto(ev.target.files[0])} style={{ display: "none" }} />
+              <input type="file" accept="image/*" capture="environment" onChange={ev => handleNachher(ev.target.files[0])} style={{ display: "none" }} />
             </label>
           )}
         </div>
       )}
-
-      {/* Erfolgsmeldung */}
-      {done && (
-        <div style={{ padding: "10px 16px", background: "#f0faf4", borderTop: "1px solid #d1eddb", fontSize: "13px", color: "#0f5132", fontWeight: "600" }}>
-          ✓ Nachher-Foto wurde hinzugefügt
-        </div>
-      )}
+      {done && <div style={{ padding: "10px 16px", background: "#f0faf4", borderTop: "1px solid #d1eddb", fontSize: "13px", color: "#0f5132", fontWeight: "600" }}>✓ Nachher-Foto hinzugefügt</div>}
     </div>
   );
 }
@@ -648,13 +635,26 @@ function NavBtn({ active, onClick, icon, label }) {
 
 // ── App Root ──────────────────────────────────────────────────
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [view, setView] = useState(null);
+  const [user, setUser] = useState(() => loadSession());
+  const [view, setView] = useState(() => {
+    const s = loadSession();
+    if (!s) return null;
+    return s.rolle === "admin" ? "admin" : "dashboard";
+  });
 
-  const handleLogin = (m) => { setUser(m); setView(m.rolle === "admin" ? "admin" : "dashboard"); };
-  const handleLogout = () => { setUser(null); setView(null); };
+  const handleLogin = (u) => {
+    setUser(u);
+    setView(u.rolle === "admin" ? "admin" : "dashboard");
+  };
+
+  const handleLogout = () => {
+    clearSession();
+    setUser(null);
+    setView(null);
+  };
 
   if (!user) return <LoginScreen onLogin={handleLogin} />;
+
   return (
     <div style={{ minHeight: "100vh", background: "#f5f4f0", fontFamily: "'DM Sans', sans-serif", maxWidth: "480px", margin: "0 auto", position: "relative" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
