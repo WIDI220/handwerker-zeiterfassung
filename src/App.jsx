@@ -13,7 +13,7 @@ const APP_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 
 // ── Controlling (NUR LESEN: employees, baustellen | SCHREIBEN: nur nach Bestätigung) ──
 const CTRL_URL = "https://uclsqnpqvphdbeutzzuu.supabase.co";
-const CTRL_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjbHNxbnBxdnBoZGJldXR6enV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA2NDk3NjQsImV4cCI6MjA1NjIyNTc2NH0.IUHviBOenJhDeKEPBOGzwb1--Ls3i9FOJHzSk44dSPs";
+const CTRL_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjbHNxbnBxdnBoZGJldXR6enV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxODUzNjQsImV4cCI6MjA4Nzc2MTM2NH0.qpWW_Bx4Lddkf3YEPeVwv0yRU_leRwakojcdfGBELs4";
 
 const appApi = async (path, options = {}) => {
   const res = await fetch(`${APP_URL}/rest/v1/${path}`, {
