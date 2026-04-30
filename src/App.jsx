@@ -328,7 +328,7 @@ function MitarbeiterDashboard({ user }) {
         {loading ? <p style={{ color: "#999", textAlign: "center", padding: "40px 0" }}>Laden...</p> :
          eintraege.length === 0 ? <p style={{ color: "#999", textAlign: "center", padding: "40px 0" }}>Noch keine Einträge</p> :
          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-           {eintraege.map(e => <EintragCard key={e.id} e={e} />)}
+           {eintraege.map(e => <EintragCard key={e.id} e={e} onReload={load} />)}
          </div>}
       </div>
     </div>
@@ -527,22 +527,97 @@ function AdminDashboard() {
 }
 
 // ── Shared ────────────────────────────────────────────────────
-function EintragCard({ e }) {
+function EintragCard({ e, onReload }) {
   const cfg = TYP[e.typ] || {}; const st = ST[e.status] || {};
+  const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [done, setDone] = useState(false);
+
+  const kannNachherFoto = e.typ === "baustelle" && !e.foto_nachher && e.status !== "verbucht";
+
+  const handleNachherFoto = async (file) => {
+    if (!file) return;
+    setPreview(URL.createObjectURL(file));
+    setUploading(true);
+    try {
+      const url = await uploadFoto(file, e.controlling_employee_id);
+      await appApi(`zeiteintraege?id=eq.${e.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ foto_nachher: url }),
+      });
+      setDone(true);
+      if (onReload) onReload();
+    } catch (err) {
+      alert("Fehler beim Hochladen: " + err.message);
+      setPreview(null);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
-    <div style={{ background: "#fff", border: "1px solid #e8e6e0", borderRadius: "12px", padding: "14px 16px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-        <span style={{ fontSize: "22px" }}>{cfg.icon}</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontWeight: "600", fontSize: "14px", color: cfg.color }}>{cfg.label}</span>
+    <div style={{ background: "#fff", border: "1px solid #e8e6e0", borderRadius: "12px", overflow: "hidden" }}>
+      <div style={{ padding: "14px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span style={{ fontSize: "22px" }}>{cfg.icon}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontWeight: "600", fontSize: "14px", color: cfg.color }}>{cfg.label}</span>
+            </div>
+            <div style={{ fontSize: "13px", color: "#999", marginTop: "2px" }}>{new Date(e.datum).toLocaleDateString("de-DE")} · {e.stunden}h</div>
           </div>
-          <div style={{ fontSize: "13px", color: "#999", marginTop: "2px" }}>{new Date(e.datum).toLocaleDateString("de-DE")} · {e.stunden}h</div>
+          <span style={{ fontSize: "12px", padding: "4px 10px", borderRadius: "20px", background: st.bg, color: st.color, fontWeight: "500", whiteSpace: "nowrap" }}>{st.label}</span>
         </div>
-        <span style={{ fontSize: "12px", padding: "4px 10px", borderRadius: "20px", background: st.bg, color: st.color, fontWeight: "500", whiteSpace: "nowrap" }}>{st.label}</span>
+        {e.beschreibung && <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#555" }}>{e.beschreibung}</p>}
+        {e.admin_kommentar && <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#888", fontStyle: "italic" }}>💬 {e.admin_kommentar}</p>}
+
+        {/* Vorhandene Fotos anzeigen */}
+        {(e.foto_vorher || e.foto_nachher) && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "10px" }}>
+            {e.foto_vorher && (
+              <div>
+                <div style={{ fontSize: "10px", fontWeight: "700", color: "#666", marginBottom: "3px" }}>VORHER</div>
+                <img src={e.foto_vorher} alt="Vorher" style={{ width: "100%", borderRadius: "6px", height: "80px", objectFit: "cover" }} />
+              </div>
+            )}
+            {e.foto_nachher && (
+              <div>
+                <div style={{ fontSize: "10px", fontWeight: "700", color: "#27ae60", marginBottom: "3px" }}>NACHHER</div>
+                <img src={e.foto_nachher} alt="Nachher" style={{ width: "100%", borderRadius: "6px", height: "80px", objectFit: "cover" }} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      {e.beschreibung && <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#555" }}>{e.beschreibung}</p>}
-      {e.admin_kommentar && <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#888", fontStyle: "italic" }}>💬 {e.admin_kommentar}</p>}
+
+      {/* Nachher-Foto nachträglich hinzufügen */}
+      {kannNachherFoto && !done && (
+        <div style={{ padding: "10px 16px 14px", borderTop: "1px solid #f0ede8", background: "#fafaf8" }}>
+          {preview ? (
+            <div>
+              <div style={{ fontSize: "11px", fontWeight: "700", color: "#27ae60", marginBottom: "4px" }}>NACHHER VORSCHAU</div>
+              <img src={preview} alt="Vorschau" style={{ width: "100%", borderRadius: "8px", maxHeight: "140px", objectFit: "cover" }} />
+              {uploading && <p style={{ margin: "6px 0 0", fontSize: "12px", color: "#999", textAlign: "center" }}>Wird hochgeladen...</p>}
+            </div>
+          ) : (
+            <label style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 14px", border: "2px dashed #d0cec8", borderRadius: "10px", cursor: "pointer", background: "#fff" }}>
+              <span style={{ fontSize: "18px" }}>✅</span>
+              <div>
+                <div style={{ fontSize: "13px", fontWeight: "600", color: "#444" }}>Nachher-Foto hinzufügen</div>
+                <div style={{ fontSize: "11px", color: "#aaa" }}>Arbeit abgeschlossen? Foto machen</div>
+              </div>
+              <input type="file" accept="image/*" capture="environment" onChange={ev => handleNachherFoto(ev.target.files[0])} style={{ display: "none" }} />
+            </label>
+          )}
+        </div>
+      )}
+
+      {/* Erfolgsmeldung */}
+      {done && (
+        <div style={{ padding: "10px 16px", background: "#f0faf4", borderTop: "1px solid #d1eddb", fontSize: "13px", color: "#0f5132", fontWeight: "600" }}>
+          ✓ Nachher-Foto wurde hinzugefügt
+        </div>
+      )}
     </div>
   );
 }
