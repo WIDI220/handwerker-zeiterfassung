@@ -149,7 +149,13 @@ function LoginScreen({ onLogin }) {
       if (user.password_hash !== p) return setErr("Passwort falsch");
       let ceid = null;
       try {
-        const emps = await ctrlRead(`employees?name=eq.${encodeURIComponent(user.name)}&aktiv=eq.true&select=id`);
+        // Erst exakter Name-Match
+        let emps = await ctrlRead(`employees?name=eq.${encodeURIComponent(user.name)}&aktiv=eq.true&select=id,name`);
+        // Fallback: Vorname-Match (z.B. "Tarik" findet "Tarik Alkan")
+        if (!emps?.length) {
+          const vorname = user.name.split(' ')[0];
+          emps = await ctrlRead(`employees?name=ilike.${encodeURIComponent(vorname + '%')}&aktiv=eq.true&select=id,name`);
+        }
         if (emps?.length > 0) ceid = emps[0].id;
       } catch {}
       const sess = { id:user.id, name:user.name, rolle:user.is_admin?"admin":"handwerker", controlling_employee_id:ceid };
