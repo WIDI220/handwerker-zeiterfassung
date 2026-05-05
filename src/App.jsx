@@ -145,14 +145,14 @@ function LoginScreen({ onLogin }) {
     try {
       // Login läuft ausschließlich über handwerker_logins
       // Dort steht Benutzername, Passwort UND direkt die employee_id – kein Matching nötig
-      const logins = await ctrlRead(`handwerker_logins?benutzername=eq.${encodeURIComponent(u.trim())}&aktiv=eq.true&select=id,name,benutzername,passwort,employee_id,is_admin`);
+      const logins = await ctrlRead(`handwerker_logins?benutzername=eq.${encodeURIComponent(u.trim())}&aktiv=eq.true&select=id,name,benutzername,passwort,employee_id`);
       if (!logins?.length) return setErr("Benutzername nicht gefunden oder deaktiviert");
       const login = logins[0];
       if (login.passwort !== p) return setErr("Passwort falsch");
       const sess = {
         id:   login.id,
         name: login.name || login.benutzername,
-        rolle: login.is_admin ? "admin" : "handwerker",
+        rolle: "handwerker",
         controlling_employee_id: login.employee_id || null,
       };
       saveSession(sess); onLogin(sess);
