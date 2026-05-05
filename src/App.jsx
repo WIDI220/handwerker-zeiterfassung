@@ -143,22 +143,18 @@ function LoginScreen({ onLogin }) {
     if (!u.trim() || !p.trim()) return setErr("Bitte alle Felder ausfüllen");
     setLoad(true); setErr("");
     try {
-      const users = await ctrlRead(`app_users?name=eq.${encodeURIComponent(u.trim())}&is_active=eq.true&select=id,name,email,password_hash,is_admin`);
-      if (!users?.length) return setErr("Benutzername nicht gefunden oder deaktiviert");
-      const user = users[0];
-      if (user.password_hash !== p) return setErr("Passwort falsch");
-      let ceid = null;
-      try {
-        // Erst exakter Name-Match
-        let emps = await ctrlRead(`employees?name=eq.${encodeURIComponent(user.name)}&aktiv=eq.true&select=id,name`);
-        // Fallback: Vorname-Match (z.B. "Tarik" findet "Tarik Alkan")
-        if (!emps?.length) {
-          const vorname = user.name.split(' ')[0];
-          emps = await ctrlRead(`employees?name=ilike.${encodeURIComponent(vorname + '%')}&aktiv=eq.true&select=id,name`);
-        }
-        if (emps?.length > 0) ceid = emps[0].id;
-      } catch {}
-      const sess = { id:user.id, name:user.name, rolle:user.is_admin?"admin":"handwerker", controlling_employee_id:ceid };
+      // Login läuft ausschließlich über handwerker_logins
+      // Dort steht Benutzername, Passwort UND direkt die employee_id – kein Matching nötig
+      const logins = await ctrlRead(`handwerker_logins?benutzername=eq.${encodeURIComponent(u.trim())}&aktiv=eq.true&select=id,name,benutzername,passwort,employee_id,is_admin`);
+      if (!logins?.length) return setErr("Benutzername nicht gefunden oder deaktiviert");
+      const login = logins[0];
+      if (login.passwort !== p) return setErr("Passwort falsch");
+      const sess = {
+        id:   login.id,
+        name: login.name || login.benutzername,
+        rolle: login.is_admin ? "admin" : "handwerker",
+        controlling_employee_id: login.employee_id || null,
+      };
       saveSession(sess); onLogin(sess);
     } catch (er) { setErr("Fehler: " + er.message); }
     finally { setLoad(false); }
