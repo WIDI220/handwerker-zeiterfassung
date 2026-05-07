@@ -527,6 +527,16 @@ function AdminDashboard({ onLogout }) {
         if (!r.ok) throw new Error("Fehler beim Schreiben");
         if (e.foto_vorher)  await ctrlWrite("bs_fotos",{baustelle_id:e.controlling_baustelle_id,url:e.foto_vorher, kategorie:"vorher", datum:e.datum,hochgeladen_von:e.controlling_employee_id,beschreibung:`Vorher – ${e.mitarbeiter_name}`});
         if (e.foto_nachher) await ctrlWrite("bs_fotos",{baustelle_id:e.controlling_baustelle_id,url:e.foto_nachher,kategorie:"nachher",datum:e.datum,hochgeladen_von:e.controlling_employee_id,beschreibung:`Nachher – ${e.mitarbeiter_name}`});
+        // Wochenplanung-Eintrag als App-Herkunft kennzeichnen
+        await ctrlWrite("wochenplanung", {
+          mitarbeiter_id: e.controlling_employee_id,
+          datum: e.datum,
+          typ: "baustelle",
+          baustelle_id: e.controlling_baustelle_id,
+          bezeichnung: e.beschreibung || e.mitarbeiter_name,
+          stunden: e.stunden,
+          quelle: "app",
+        });
       } else {
         const pre = e.typ==="ticket"?"Ticket":e.typ==="dguv"?"DGUV":"Sonstiges";
         await ctrlWrite("interne_stunden",{employee_id:e.controlling_employee_id,datum:e.datum,stunden:e.stunden,beschreibung:`${pre} – ${e.beschreibung||e.mitarbeiter_name}`});
