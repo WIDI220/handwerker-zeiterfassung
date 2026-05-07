@@ -540,6 +540,17 @@ function AdminDashboard({ onLogout }) {
       } else {
         const pre = e.typ==="ticket"?"Ticket":e.typ==="dguv"?"DGUV":"Sonstiges";
         await ctrlWrite("interne_stunden",{employee_id:e.controlling_employee_id,datum:e.datum,stunden:e.stunden,beschreibung:`${pre} – ${e.beschreibung||e.mitarbeiter_name}`});
+        // Wochenplanung-Eintrag für Ticket/DGUV/Sonstiges
+        const wpTyp = e.typ==="ticket" ? "tickets" : e.typ==="dguv" ? "dguv" : "intern";
+        const wpLabel = e.typ==="ticket" ? "Tickets" : e.typ==="dguv" ? "DGUV-Messungen" : "Interne Stunden";
+        await ctrlWrite("wochenplanung", {
+          mitarbeiter_id: e.controlling_employee_id,
+          datum: e.datum,
+          typ: wpTyp,
+          bezeichnung: e.beschreibung || wpLabel,
+          stunden: e.stunden,
+          quelle: "app",
+        });
       }
       await appApi(`zeiteintraege?id=eq.${e.id}`,{method:"PATCH",body:JSON.stringify({status:"verbucht",bearbeitet_am:new Date().toISOString()})});
       setVerbId(null); load();
