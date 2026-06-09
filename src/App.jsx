@@ -1,13 +1,16 @@
 // ============================================================
-// HANDWERKER ZEITERFASSUNG v4 – WIDI Design System
+// HANDWERKER ZEITERFASSUNG v5 – WIDI Design System
 // ============================================================
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 const APP_URL  = "https://syhjjuewkjjihxwiexmz.supabase.co";
 const APP_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5aGpqdWV3a2pqaWh4d2lleG16Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1MTk2NDYsImV4cCI6MjA5MzA5NTY0Nn0.9A-GrkU72IZ3uxkypX5GttN4EXNv46aX4uOY4wUmfaE";
 const CTRL_URL = "https://uclsqnpqvphdbeutzzuu.supabase.co";
 const CTRL_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjbHNxbnBxdnBoZGJldXR6enV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxODUzNjQsImV4cCI6MjA4Nzc2MTM2NH0.qpWW_Bx4Lddkf3YEPeVwv0yRU_leRwakojcdfGBELs4";
+
+const MAX_FOTOS = 10;
+const FOTO_LABELS = ["Vorher", "Nachher", "Detail", "Schaden", "Fertig", "Beleg", "Sonstiges"];
 
 // ── API helpers ───────────────────────────────────────────────
 const appApi = async (path, options = {}) => {
@@ -31,7 +34,7 @@ const ctrlWrite = async (path, body, options = {}) => {
 };
 const uploadFoto = async (file, userId) => {
   const ext = file.name.split(".").pop();
-  const path = `${userId}/${Date.now()}.${ext}`;
+  const path = `${userId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
   const res = await fetch(`${APP_URL}/storage/v1/object/fotos/${path}`, { method: "POST", headers: { apikey: APP_KEY, Authorization: `Bearer ${APP_KEY}`, "Content-Type": file.type }, body: file });
   if (!res.ok) throw new Error("Foto Upload fehlgeschlagen");
   return `${APP_URL}/storage/v1/object/public/fotos/${path}`;
@@ -43,7 +46,7 @@ const saveSession = (u) => localStorage.setItem(SESSION_KEY, JSON.stringify(u));
 const loadSession = () => { try { const s = localStorage.getItem(SESSION_KEY); return s ? JSON.parse(s) : null; } catch { return null; } };
 const clearSession = () => localStorage.removeItem(SESSION_KEY);
 
-// ── Design tokens – identisch zum WIDI Controlling ────────────
+// ── Design tokens ─────────────────────────────────────────────
 const C = {
   navy:"#0f1f3d", blue:"#1e3a5f", accent:"#2563eb", green:"#10b981",
   amber:"#f59e0b", red:"#ef4444", cyan:"#0891b2", purple:"#8b5cf6",
@@ -65,6 +68,17 @@ const ST = {
 const ICONS = { baustelle:"🏗️", ticket:"🎫", dguv:"🦺", sonstiges:"📋" };
 const FONT  = "'Inter', system-ui, sans-serif";
 const inp   = { width:"100%", padding:"11px 14px", border:`1.5px solid ${C.border2}`, borderRadius:10, fontSize:14, background:C.card, color:C.text, boxSizing:"border-box", fontFamily:"inherit", outline:"none" };
+
+// Label-Farben für Foto-Tags
+const LABEL_COLORS = {
+  "Vorher":    { color:"#1d4ed8", bg:"#eff6ff" },
+  "Nachher":   { color:"#065f46", bg:"#f0fdf4" },
+  "Detail":    { color:"#92400e", bg:"#fffbeb" },
+  "Schaden":   { color:"#991b1b", bg:"#fef2f2" },
+  "Fertig":    { color:"#065f46", bg:"#d1fae5" },
+  "Beleg":     { color:"#6b21a8", bg:"#f5f3ff" },
+  "Sonstiges": { color:"#475569", bg:"#f1f5f9" },
+};
 
 // ── Global CSS ────────────────────────────────────────────────
 const GlobalStyles = () => (
@@ -128,6 +142,297 @@ function Section({ title, children }) {
   );
 }
 
+// ── Foto-Label Picker ─────────────────────────────────────────
+function LabelPicker({ value, onChange }) {
+  return (
+    <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:6 }}>
+      {FOTO_LABELS.map(l => {
+        const lc = LABEL_COLORS[l] || { color:C.text2, bg:C.bg };
+        const active = value === l;
+        return (
+          <button key={l} type="button" onClick={() => onChange(l)}
+            style={{ padding:"4px 10px", borderRadius:99, fontSize:11, fontWeight:700, cursor:"pointer", border:`1.5px solid ${active ? lc.color : C.border2}`, background:active ? lc.bg : C.card, color:active ? lc.color : C.text3, transition:"all .12s" }}>
+            {l}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Foto-Upload Block (Multi, aus Galerie oder Kamera) ────────
+function FotoUploadBlock({ fotos, onChange }) {
+  // fotos: Array<{ file?: File, url?: string, preview: string, label: string }>
+  const fileRef = useRef();
+
+  const handleFiles = (files) => {
+    const arr = Array.from(files).slice(0, MAX_FOTOS - fotos.length);
+    if (!arr.length) return;
+    const neu = arr.map(f => ({ file: f, preview: URL.createObjectURL(f), label: "Vorher" }));
+    onChange([...fotos, ...neu]);
+  };
+
+  const removeAt = (i) => {
+    const updated = fotos.filter((_, idx) => idx !== i);
+    onChange(updated);
+  };
+
+  const setLabelAt = (i, label) => {
+    const updated = fotos.map((f, idx) => idx === i ? { ...f, label } : f);
+    onChange(updated);
+  };
+
+  const remaining = MAX_FOTOS - fotos.length;
+
+  return (
+    <div>
+      {/* Hinzufügen Button */}
+      {remaining > 0 && (
+        <label style={{ display:"flex", alignItems:"center", gap:12, padding:"13px 16px", border:`2px dashed ${C.border2}`, borderRadius:12, cursor:"pointer", background:C.bg, marginBottom: fotos.length ? 12 : 0, transition:"all .15s" }}>
+          <span style={{ fontSize:22 }}>📷</span>
+          <div style={{ flex:1 }}>
+            <p style={{ fontSize:13, fontWeight:600, color:C.text2, margin:0 }}>
+              {fotos.length === 0 ? "Fotos hinzufügen" : "Weitere Fotos hinzufügen"}
+            </p>
+            <p style={{ fontSize:11, color:C.text3, margin:0 }}>
+              Aus Galerie oder Kamera · noch {remaining} von {MAX_FOTOS}
+            </p>
+          </div>
+          <span style={{ fontSize:12, fontWeight:700, color:C.text3, background:C.border, padding:"3px 8px", borderRadius:6 }}>{fotos.length}/{MAX_FOTOS}</span>
+          <input ref={fileRef} type="file" accept="image/*" multiple onChange={e => handleFiles(e.target.files)} style={{ display:"none" }} />
+        </label>
+      )}
+
+      {/* Foto-Grid */}
+      {fotos.length > 0 && (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {fotos.map((f, i) => {
+            const lc = LABEL_COLORS[f.label] || { color:C.text2, bg:C.bg };
+            return (
+              <div key={i} style={{ border:`1px solid ${C.border2}`, borderRadius:12, overflow:"hidden", background:C.card }}>
+                <div style={{ position:"relative" }}>
+                  <img src={f.preview || f.url} alt={`Foto ${i+1}`} style={{ width:"100%", height:140, objectFit:"cover", display:"block" }} />
+                  <button type="button" onClick={() => removeAt(i)}
+                    style={{ position:"absolute", top:8, right:8, width:28, height:28, borderRadius:"50%", background:"rgba(0,0,0,.55)", border:"none", color:"#fff", cursor:"pointer", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 }}>
+                    ×
+                  </button>
+                  <span style={{ position:"absolute", top:8, left:8, fontSize:11, fontWeight:700, padding:"3px 8px", borderRadius:99, background:lc.bg, color:lc.color, border:`1px solid ${lc.color}30` }}>
+                    {f.label}
+                  </span>
+                </div>
+                <div style={{ padding:"10px 12px" }}>
+                  <p style={{ fontSize:11, fontWeight:700, color:C.text3, textTransform:"uppercase", letterSpacing:".05em", margin:"0 0 6px" }}>Markierung</p>
+                  <LabelPicker value={f.label} onChange={l => setLabelAt(i, l)} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {remaining === 0 && (
+        <p style={{ fontSize:12, color:C.text3, textAlign:"center", marginTop:8 }}>Maximale Anzahl erreicht ({MAX_FOTOS} Fotos)</p>
+      )}
+    </div>
+  );
+}
+
+// ── Foto-Anzeige (read-only) ──────────────────────────────────
+function FotoAnzeige({ fotos, fotoVorher, fotoNachher, compact = false }) {
+  // Unterstützt sowohl neues fotos-Array als auch altes vorher/nachher
+  const items = [];
+  if (fotos && Array.isArray(fotos) && fotos.length > 0) {
+    fotos.forEach(f => items.push({ url: f.url, label: f.label }));
+  } else {
+    if (fotoVorher)  items.push({ url: fotoVorher,  label: "Vorher" });
+    if (fotoNachher) items.push({ url: fotoNachher, label: "Nachher" });
+  }
+  if (!items.length) return null;
+
+  const h = compact ? 80 : 120;
+  const cols = items.length === 1 ? "1fr" : items.length === 2 ? "1fr 1fr" : "1fr 1fr 1fr";
+
+  return (
+    <div style={{ display:"grid", gridTemplateColumns:cols, gap:8, marginTop:10 }}>
+      {items.map((item, i) => {
+        const lc = LABEL_COLORS[item.label] || { color:C.text2, bg:C.bg };
+        return (
+          <div key={i} style={{ position:"relative" }}>
+            <img src={item.url} alt={item.label} style={{ width:"100%", borderRadius:8, height:h, objectFit:"cover", display:"block" }} />
+            <span style={{ position:"absolute", bottom:4, left:4, fontSize:9, fontWeight:700, padding:"2px 6px", borderRadius:99, background:lc.bg, color:lc.color, border:`1px solid ${lc.color}30` }}>
+              {item.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// KALENDER VIEW
+// ═════════════════════════════════════════════════════════════
+function KalenderView({ eintraege }) {
+  const [month, setMonth] = useState(() => {
+    const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() };
+  });
+
+  const prevMonth = () => setMonth(m => {
+    const d = new Date(m.year, m.month - 1, 1);
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+  const nextMonth = () => setMonth(m => {
+    const d = new Date(m.year, m.month + 1, 1);
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+
+  const monatName = new Date(month.year, month.month, 1).toLocaleDateString("de-DE", { month:"long", year:"numeric" });
+
+  // Einträge für diesen Monat
+  const tageMap = {};
+  eintraege.forEach(e => {
+    const d = new Date(e.datum);
+    if (d.getFullYear() === month.year && d.getMonth() === month.month) {
+      const key = d.getDate();
+      if (!tageMap[key]) tageMap[key] = [];
+      tageMap[key].push(e);
+    }
+  });
+
+  // Kalender-Grid aufbauen
+  const ersterTag = new Date(month.year, month.month, 1);
+  const letzterTag = new Date(month.year, month.month + 1, 0);
+  // Montag = 0
+  let startDow = ersterTag.getDay() - 1;
+  if (startDow < 0) startDow = 6;
+
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= letzterTag.getDate(); d++) cells.push(d);
+
+  const today = new Date();
+  const isToday = (d) => d === today.getDate() && month.month === today.getMonth() && month.year === today.getFullYear();
+
+  // Monats-Statistik
+  const monatStunden = Object.values(tageMap).flat().reduce((s,e) => s + Number(e.stunden||0), 0);
+  const monatTage = Object.keys(tageMap).length;
+
+  // Typ-Summen
+  const typSummen = {};
+  Object.values(tageMap).flat().forEach(e => {
+    typSummen[e.typ] = (typSummen[e.typ] || 0) + Number(e.stunden || 0);
+  });
+
+  const [selectedDay, setSelectedDay] = useState(null);
+  const dayEntries = selectedDay ? (tageMap[selectedDay] || []) : [];
+
+  return (
+    <div style={{ padding:"16px 20px", paddingBottom:40 }}>
+      {/* Monats-Navigation */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+        <button onClick={prevMonth} style={{ width:36, height:36, borderRadius:10, background:C.card, border:`1px solid ${C.border2}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, color:C.text2 }}>‹</button>
+        <div style={{ textAlign:"center" }}>
+          <p style={{ fontSize:16, fontWeight:800, color:C.text, margin:0 }}>{monatName}</p>
+          <p style={{ fontSize:11, color:C.text3, margin:"2px 0 0" }}>{monatStunden}h auf {monatTage} Tagen</p>
+        </div>
+        <button onClick={nextMonth} style={{ width:36, height:36, borderRadius:10, background:C.card, border:`1px solid ${C.border2}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, color:C.text2 }}>›</button>
+      </div>
+
+      {/* Typ-Legende */}
+      {Object.keys(typSummen).length > 0 && (
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+          {Object.entries(typSummen).map(([typ, h]) => {
+            const cfg = TYP[typ] || {};
+            return (
+              <div key={typ} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", borderRadius:99, background:cfg.bg||C.bg, border:`1px solid ${cfg.color||C.border2}30` }}>
+                <span style={{ fontSize:12 }}>{ICONS[typ]}</span>
+                <span style={{ fontSize:11, fontWeight:700, color:cfg.color||C.text2 }}>{cfg.label||typ}</span>
+                <span style={{ fontSize:11, color:C.text3, fontWeight:600 }}>{h}h</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Wochentage Header */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:3, marginBottom:3 }}>
+        {["Mo","Di","Mi","Do","Fr","Sa","So"].map(d => (
+          <div key={d} style={{ textAlign:"center", fontSize:10, fontWeight:700, color:C.text3, textTransform:"uppercase", letterSpacing:".05em", padding:"4px 0" }}>{d}</div>
+        ))}
+      </div>
+
+      {/* Kalender-Grid */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:3 }}>
+        {cells.map((d, i) => {
+          if (!d) return <div key={`e${i}`} />;
+          const entries = tageMap[d] || [];
+          const totalH = entries.reduce((s,e) => s + Number(e.stunden||0), 0);
+          const typen = [...new Set(entries.map(e => e.typ))];
+          const selected = selectedDay === d;
+          const tod = isToday(d);
+
+          return (
+            <button key={d} type="button" onClick={() => setSelectedDay(selected ? null : d)}
+              style={{
+                padding:"6px 3px", borderRadius:10, border:`1.5px solid ${selected ? C.accent : tod ? C.accent+"40" : entries.length ? C.border2 : "transparent"}`,
+                background: selected ? C.accent+"12" : tod ? C.accent+"08" : entries.length ? C.card : "transparent",
+                cursor: entries.length ? "pointer" : "default",
+                display:"flex", flexDirection:"column", alignItems:"center", gap:2, minHeight:54,
+                transition:"all .12s",
+              }}>
+              <span style={{ fontSize:13, fontWeight: tod ? 800 : entries.length ? 700 : 400, color: tod ? C.accent : entries.length ? C.text : C.text3 }}>{d}</span>
+              {totalH > 0 && <span style={{ fontSize:10, fontWeight:700, color:selected ? C.accent : C.text2 }}>{totalH}h</span>}
+              {typen.length > 0 && (
+                <div style={{ display:"flex", gap:2, flexWrap:"wrap", justifyContent:"center" }}>
+                  {typen.slice(0,3).map(t => {
+                    const cfg = TYP[t] || {};
+                    return <span key={t} style={{ width:6, height:6, borderRadius:"50%", background:cfg.color||C.text3, flexShrink:0 }} />;
+                  })}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tag-Detail */}
+      {selectedDay && dayEntries.length > 0 && (
+        <div className="fade" style={{ marginTop:16, background:C.card, border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden" }}>
+          <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:C.bg }}>
+            <p style={{ fontSize:13, fontWeight:700, color:C.text, margin:0 }}>
+              {new Date(month.year, month.month, selectedDay).toLocaleDateString("de-DE", { weekday:"long", day:"2-digit", month:"long" })}
+            </p>
+            <p style={{ fontSize:11, color:C.text3, margin:"2px 0 0" }}>
+              {dayEntries.reduce((s,e) => s+Number(e.stunden||0), 0)}h · {dayEntries.length} Eintrag{dayEntries.length !== 1 ? "e" : ""}
+            </p>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+            {dayEntries.map((e, i) => {
+              const cfg = TYP[e.typ] || {};
+              const st  = ST[e.status] || {};
+              return (
+                <div key={e.id} style={{ padding:"12px 16px", borderBottom: i < dayEntries.length-1 ? `1px solid ${C.border}` : "none" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <span style={{ fontSize:18 }}>{ICONS[e.typ]}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                        <span style={{ fontSize:13, fontWeight:700, color:cfg.color||C.text }}>{cfg.label||e.typ}</span>
+                        <Badge label={st.label} color={st.color} bg={st.bg} />
+                      </div>
+                      {e.beschreibung && <p style={{ fontSize:12, color:C.text2, margin:"2px 0 0", lineHeight:1.4 }}>{e.beschreibung}</p>}
+                    </div>
+                    <span style={{ fontSize:14, fontWeight:800, color:C.text, flexShrink:0 }}>{e.stunden}h</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═════════════════════════════════════════════════════════════
 // LOGIN
 // ═════════════════════════════════════════════════════════════
@@ -143,8 +448,6 @@ function LoginScreen({ onLogin }) {
     if (!u.trim() || !p.trim()) return setErr("Bitte alle Felder ausfüllen");
     setLoad(true); setErr("");
     try {
-      // Login läuft ausschließlich über handwerker_logins
-      // Dort steht Benutzername, Passwort UND direkt die employee_id – kein Matching nötig
       const logins = await ctrlRead(`handwerker_logins?benutzername=eq.${encodeURIComponent(u.trim())}&aktiv=eq.true&select=id,name,benutzername,passwort,employee_id`);
       if (!logins?.length) return setErr("Benutzername nicht gefunden oder deaktiviert");
       const login = logins[0];
@@ -167,7 +470,6 @@ function LoginScreen({ onLogin }) {
       <div style={{ position:"absolute", bottom:-80, left:-80, width:300, height:300, borderRadius:"50%", background:"rgba(16,185,129,.1)", filter:"blur(40px)", pointerEvents:"none" }} />
 
       <div style={{ width:"100%", maxWidth:400, position:"relative", zIndex:1 }}>
-        {/* Logo */}
         <div style={{ textAlign:"center", marginBottom:36 }}>
           <div style={{ width:60, height:60, borderRadius:18, background:"linear-gradient(135deg,#2563eb,#1d4ed8)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px", boxShadow:"0 8px 24px rgba(37,99,235,.4)" }}>
             <span style={{ fontSize:26, fontWeight:800, color:"#fff" }}>W</span>
@@ -176,7 +478,6 @@ function LoginScreen({ onLogin }) {
           <p style={{ fontSize:13, color:"rgba(255,255,255,.5)", margin:0 }}>Bitte einloggen um fortzufahren</p>
         </div>
 
-        {/* Form card */}
         <div className="card fade" style={{ padding:"28px 24px" }}>
           <form onSubmit={submit} style={{ display:"flex", flexDirection:"column", gap:16 }}>
             <div>
@@ -206,8 +507,7 @@ function LoginScreen({ onLogin }) {
 function NeuerEintrag({ user, onSuccess, onCancel }) {
   const [baustellen, setBaustellen] = useState([]);
   const [form, setForm] = useState({ datum:new Date().toISOString().split("T")[0], typ:"", baustelle_id:"", beschreibung:"", stunden:"", material:"", material_kosten:"" });
-  const [fotos, setFotos]   = useState({ vorher:null, nachher:null });
-  const [prev, setPrev]     = useState({ vorher:null, nachher:null });
+  const [fotos, setFotos]   = useState([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr]       = useState("");
 
@@ -218,21 +518,23 @@ function NeuerEintrag({ user, onSuccess, onCancel }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]:v }));
 
-  const handleFoto = (typ, file) => {
-    if (!file) return;
-    setFotos(f => ({ ...f, [typ]:file }));
-    setPrev(p => ({ ...p, [typ]:URL.createObjectURL(file) }));
-  };
-
   const submit = async () => {
     if (!form.typ)                                                        return setErr("Bitte Tätigkeitstyp wählen");
     if (!form.stunden || isNaN(form.stunden) || Number(form.stunden) <= 0) return setErr("Bitte gültige Stunden eingeben");
     if (form.typ === "baustelle" && !form.baustelle_id)                  return setErr("Bitte Baustelle wählen");
     setSaving(true); setErr("");
     try {
-      let fv = null, fn = null;
-      if (fotos.vorher)  fv = await uploadFoto(fotos.vorher,  user.id);
-      if (fotos.nachher) fn = await uploadFoto(fotos.nachher, user.id);
+      // Fotos hochladen
+      const uploadedFotos = [];
+      for (const f of fotos) {
+        if (f.file) {
+          const url = await uploadFoto(f.file, user.id);
+          uploadedFotos.push({ url, label: f.label });
+        } else if (f.url) {
+          uploadedFotos.push({ url: f.url, label: f.label });
+        }
+      }
+
       await appApi("zeiteintraege", { method:"POST", body:JSON.stringify({
         controlling_employee_id: user.controlling_employee_id,
         mitarbeiter_name: user.name,
@@ -242,13 +544,18 @@ function NeuerEintrag({ user, onSuccess, onCancel }) {
         stunden: Number(form.stunden),
         material: form.material || null,
         material_kosten: form.material_kosten ? Number(form.material_kosten) : null,
-        foto_vorher: fv, foto_nachher: fn,
+        fotos: uploadedFotos,
+        // Legacy-Felder für Rückwärtskompatibilität
+        foto_vorher:  uploadedFotos.find(f => f.label === "Vorher")?.url  || null,
+        foto_nachher: uploadedFotos.find(f => f.label === "Nachher")?.url || null,
         status: "offen",
       }) });
       onSuccess();
     } catch(e) { setErr(e.message); }
     finally { setSaving(false); }
   };
+
+  const uploadingCount = fotos.filter(f => f.file).length;
 
   return (
     <div style={{ paddingBottom:100, fontFamily:FONT }}>
@@ -299,40 +606,14 @@ function NeuerEintrag({ user, onSuccess, onCancel }) {
         {form.material && <Section title="Materialkosten (€)"><input type="number" value={form.material_kosten} onChange={e=>set("material_kosten",e.target.value)} placeholder="45.00" step="0.01" style={inp}/></Section>}
 
         {/* Fotos */}
-        {form.typ === "baustelle" ? (
-          <Section title="Dokumentationsfotos">
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-              {["vorher","nachher"].map(typ => (
-                <div key={typ}>
-                  <label style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8, padding:"16px 10px", border:`2px dashed ${prev[typ]?C.green:C.border2}`, borderRadius:12, cursor:"pointer", background:prev[typ]?"#f0fdf4":C.bg, textAlign:"center", transition:"all .15s" }}>
-                    <span style={{ fontSize:24 }}>{typ==="vorher"?"📷":"✅"}</span>
-                    <span style={{ fontSize:12, fontWeight:700, color:prev[typ]?C.green:C.text2, textTransform:"uppercase", letterSpacing:".04em" }}>{typ==="vorher"?"Vorher":"Nachher"}</span>
-                    <span style={{ fontSize:11, color:prev[typ]?C.green:C.text3 }}>{prev[typ]?"✓ Ausgewählt":"Foto aufnehmen"}</span>
-                    <input type="file" accept="image/*" capture="environment" onChange={e=>handleFoto(typ,e.target.files[0])} style={{ display:"none" }} />
-                  </label>
-                  {prev[typ] && <img src={prev[typ]} alt={typ} style={{ width:"100%", borderRadius:8, marginTop:8, height:100, objectFit:"cover" }} />}
-                </div>
-              ))}
-            </div>
-          </Section>
-        ) : (
-          <Section title="Foto / Beleg (optional)">
-            <label style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", border:`2px dashed ${C.border2}`, borderRadius:12, cursor:"pointer", background:C.bg }}>
-              <span style={{ fontSize:22 }}>📷</span>
-              <div>
-                <p style={{ fontSize:13, fontWeight:600, color:C.text2, margin:0 }}>{prev.vorher?"Foto ausgewählt ✓":"Foto hochladen"}</p>
-                <p style={{ fontSize:11, color:C.text3, margin:0 }}>Optional als Beleg</p>
-              </div>
-              <input type="file" accept="image/*" capture="environment" onChange={e=>handleFoto("vorher",e.target.files[0])} style={{ display:"none" }} />
-            </label>
-            {prev.vorher && <img src={prev.vorher} alt="Beleg" style={{ width:"100%", borderRadius:8, marginTop:8, maxHeight:180, objectFit:"cover" }} />}
-          </Section>
-        )}
+        <Section title={`Fotos${fotos.length > 0 ? ` (${fotos.length})` : " (optional)"}`}>
+          <FotoUploadBlock fotos={fotos} onChange={setFotos} />
+        </Section>
 
         {err && <div style={{ background:"#fef2f2", color:"#991b1b", padding:"12px 16px", borderRadius:10, fontSize:13, border:"1px solid #fecaca", fontWeight:500 }}>⚠️ {err}</div>}
 
         <button onClick={submit} disabled={saving} className="btn-p" style={{ padding:16, fontSize:15 }}>
-          {saving ? "Wird gespeichert..." : "Eintrag einreichen →"}
+          {saving ? `Wird gespeichert${uploadingCount > 0 ? ` (${uploadingCount} Fotos)...` : "..."}` : "Eintrag einreichen →"}
         </button>
       </div>
     </div>
@@ -344,21 +625,10 @@ function NeuerEintrag({ user, onSuccess, onCancel }) {
 // ═════════════════════════════════════════════════════════════
 function EintragCard({ e, onReload }) {
   const cfg = TYP[e.typ] || {}; const st = ST[e.status] || {};
-  const [up, setUp]     = useState(false);
-  const [prev, setPrev] = useState(null);
-  const [done, setDone] = useState(false);
-  const kann = e.typ === "baustelle" && !e.foto_nachher && e.status !== "verbucht";
 
-  const nachher = async (file) => {
-    if (!file) return;
-    setPrev(URL.createObjectURL(file)); setUp(true);
-    try {
-      const url = await uploadFoto(file, e.controlling_employee_id || "x");
-      await appApi(`zeiteintraege?id=eq.${e.id}`, { method:"PATCH", body:JSON.stringify({ foto_nachher:url }) });
-      setDone(true); if (onReload) onReload();
-    } catch(er) { alert("Fehler: "+er.message); setPrev(null); }
-    finally { setUp(false); }
-  };
+  // Fotos parsen
+  let fotosArr = [];
+  if (e.fotos && Array.isArray(e.fotos) && e.fotos.length > 0) fotosArr = e.fotos;
 
   return (
     <div className="card fade" style={{ overflow:"hidden" }}>
@@ -378,35 +648,11 @@ function EintragCard({ e, onReload }) {
         </div>
         {e.beschreibung && <p style={{ fontSize:13, color:C.text2, margin:"0 0 8px", lineHeight:1.5 }}>{e.beschreibung}</p>}
         {e.material && <p style={{ fontSize:12, color:C.text3, margin:"0 0 8px" }}>📦 {e.material}{e.material_kosten?` — ${e.material_kosten}€`:""}</p>}
-        {(e.foto_vorher||e.foto_nachher) && (
-          <div style={{ display:"grid", gridTemplateColumns:e.foto_vorher&&e.foto_nachher?"1fr 1fr":"1fr", gap:8, marginTop:8 }}>
-            {e.foto_vorher  && <div><p style={{ fontSize:10,fontWeight:700,color:C.text3,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em" }}>Vorher</p>  <img src={e.foto_vorher}  alt="V" style={{ width:"100%",borderRadius:8,height:80,objectFit:"cover" }}/></div>}
-            {e.foto_nachher && <div><p style={{ fontSize:10,fontWeight:700,color:C.green,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em" }}>Nachher</p> <img src={e.foto_nachher} alt="N" style={{ width:"100%",borderRadius:8,height:80,objectFit:"cover" }}/></div>}
-          </div>
-        )}
+
+        <FotoAnzeige fotos={fotosArr} fotoVorher={e.foto_vorher} fotoNachher={e.foto_nachher} compact />
+
         {e.admin_kommentar && <div style={{ marginTop:8, padding:"8px 12px", background:C.bg, borderRadius:8, fontSize:12, color:C.text2, borderLeft:`3px solid ${C.border2}` }}>💬 {e.admin_kommentar}</div>}
       </div>
-      {kann && !done && (
-        <div style={{ padding:"10px 16px 14px", borderTop:`1px solid ${C.border}`, background:C.bg }}>
-          {prev ? (
-            <div>
-              <p style={{ fontSize:11,fontWeight:700,color:C.green,marginBottom:6,textTransform:"uppercase",letterSpacing:".04em" }}>Nachher-Vorschau</p>
-              <img src={prev} alt="Vorschau" style={{ width:"100%",borderRadius:8,maxHeight:140,objectFit:"cover" }} />
-              {up && <p style={{ margin:"6px 0 0",fontSize:12,color:C.text3,textAlign:"center" }}>Wird hochgeladen...</p>}
-            </div>
-          ) : (
-            <label style={{ display:"flex",alignItems:"center",gap:12,padding:"10px 14px",border:`2px dashed ${C.border2}`,borderRadius:10,cursor:"pointer",background:C.card }}>
-              <span style={{ fontSize:20 }}>✅</span>
-              <div>
-                <p style={{ fontSize:13,fontWeight:600,color:C.text2,margin:0 }}>Nachher-Foto hinzufügen</p>
-                <p style={{ fontSize:11,color:C.text3,margin:0 }}>Arbeit fertig?</p>
-              </div>
-              <input type="file" accept="image/*" capture="environment" onChange={ev=>nachher(ev.target.files[0])} style={{ display:"none" }} />
-            </label>
-          )}
-        </div>
-      )}
-      {done && <div style={{ padding:"10px 16px",background:"#f0fdf4",borderTop:"1px solid #d1fae5",fontSize:13,color:"#065f46",fontWeight:600 }}>✓ Nachher-Foto hinzugefügt</div>}
     </div>
   );
 }
@@ -415,19 +661,19 @@ function EintragCard({ e, onReload }) {
 // MITARBEITER DASHBOARD
 // ═════════════════════════════════════════════════════════════
 function MitarbeiterDashboard({ user, onLogout }) {
-  const [view, setView]           = useState("list");
+  const [mainView, setMainView]       = useState("list"); // "list" | "kalender" | "neu"
   const [eintraege, setEintraege] = useState([]);
   const [loading, setLoading]     = useState(true);
 
   const load = useCallback(() => {
     setLoading(true);
-    appApi(`zeiteintraege?controlling_employee_id=eq.${user.controlling_employee_id}&order=erstellt_am.desc&limit=60`)
+    appApi(`zeiteintraege?controlling_employee_id=eq.${user.controlling_employee_id}&order=datum.desc&limit=200`)
       .then(setEintraege).finally(() => setLoading(false));
   }, [user.controlling_employee_id]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (view === "neu") return <NeuerEintrag user={user} onSuccess={() => { load(); setView("list"); }} onCancel={() => setView("list")} />;
+  if (mainView === "neu") return <NeuerEintrag user={user} onSuccess={() => { load(); setMainView("list"); }} onCancel={() => setMainView("list")} />;
 
   const offene     = eintraege.filter(e => e.status === "offen").length;
   const gesamtH    = eintraege.reduce((s,e) => s+Number(e.stunden||0), 0);
@@ -462,28 +708,47 @@ function MitarbeiterDashboard({ user, onLogout }) {
         </div>
       </div>
 
-      <div style={{ padding:"16px 20px" }}>
-        <button onClick={() => setView("neu")} className="btn-p" style={{ width:"100%", padding:15, fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+      {/* Neuer Eintrag Button */}
+      <div style={{ padding:"16px 20px 0" }}>
+        <button onClick={() => setMainView("neu")} className="btn-p" style={{ width:"100%", padding:15, fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
           <span style={{ fontSize:20, lineHeight:1 }}>+</span> Neuen Eintrag erstellen
         </button>
       </div>
 
-      <div style={{ padding:"0 20px" }}>
-        <p style={{ fontSize:11, fontWeight:700, color:C.text3, textTransform:"uppercase", letterSpacing:".06em", margin:"0 0 12px" }}>
-          Meine Einträge ({eintraege.length})
-        </p>
-        {loading ? <Spinner /> : eintraege.length === 0 ? (
-          <div style={{ textAlign:"center", padding:"48px 0" }}>
-            <p style={{ fontSize:40, marginBottom:12 }}>📋</p>
-            <p style={{ fontSize:15, fontWeight:600, color:C.text2, margin:"0 0 4px" }}>Noch keine Einträge</p>
-            <p style={{ fontSize:13, color:C.text3 }}>Erstelle deinen ersten Eintrag oben</p>
-          </div>
-        ) : (
-          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {eintraege.map(e => <EintragCard key={e.id} e={e} onReload={load} />)}
-          </div>
-        )}
+      {/* Tab Navigation */}
+      <div style={{ display:"flex", background:C.card, borderBottom:`1px solid ${C.border}`, margin:"16px 0 0" }}>
+        {[
+          { key:"list",      label:"📋 Meine Einträge", count: eintraege.length },
+          { key:"kalender",  label:"📅 Mein Kalender",  count: null },
+        ].map(tab => (
+          <button key={tab.key} onClick={() => setMainView(tab.key)}
+            style={{ flex:1, padding:"12px 8px", border:"none", background:"none", cursor:"pointer", fontSize:13, fontWeight:mainView===tab.key ? 700 : 500, color:mainView===tab.key ? C.accent : C.text3, borderBottom:mainView===tab.key ? `2px solid ${C.accent}` : "2px solid transparent", transition:"all .15s" }}>
+            {tab.label}
+            {tab.count !== null && tab.count > 0 && (
+              <span style={{ marginLeft:6, minWidth:18, height:18, background:C.border2, color:C.text2, borderRadius:99, fontSize:10, fontWeight:800, display:"inline-flex", alignItems:"center", justifyContent:"center", padding:"0 5px" }}>{tab.count}</span>
+            )}
+          </button>
+        ))}
       </div>
+
+      {/* Content */}
+      {mainView === "kalender" ? (
+        loading ? <Spinner /> : <KalenderView eintraege={eintraege} />
+      ) : (
+        <div style={{ padding:"16px 20px" }}>
+          {loading ? <Spinner /> : eintraege.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"48px 0" }}>
+              <p style={{ fontSize:40, marginBottom:12 }}>📋</p>
+              <p style={{ fontSize:15, fontWeight:600, color:C.text2, margin:"0 0 4px" }}>Noch keine Einträge</p>
+              <p style={{ fontSize:13, color:C.text3 }}>Erstelle deinen ersten Eintrag oben</p>
+            </div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {eintraege.map(e => <EintragCard key={e.id} e={e} onReload={load} />)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -525,8 +790,18 @@ function AdminDashboard({ onLogout }) {
       if (e.typ === "baustelle" && e.controlling_baustelle_id) {
         const r = await fetch(`${CTRL_URL}/rest/v1/bs_stundeneintraege`, { method:"POST", headers:{apikey:CTRL_KEY,Authorization:`Bearer ${CTRL_KEY}`,"Content-Type":"application/json",Prefer:"return=minimal"}, body:JSON.stringify({baustelle_id:e.controlling_baustelle_id,mitarbeiter_id:e.controlling_employee_id,datum:e.datum,stunden:e.stunden,beschreibung:e.beschreibung||`App: ${e.mitarbeiter_name}`}) });
         if (!r.ok) throw new Error("Fehler beim Schreiben");
-        if (e.foto_vorher)  await ctrlWrite("bs_fotos",{baustelle_id:e.controlling_baustelle_id,url:e.foto_vorher, kategorie:"vorher", datum:e.datum,hochgeladen_von:e.controlling_employee_id,beschreibung:`Vorher – ${e.mitarbeiter_name}`});
-        if (e.foto_nachher) await ctrlWrite("bs_fotos",{baustelle_id:e.controlling_baustelle_id,url:e.foto_nachher,kategorie:"nachher",datum:e.datum,hochgeladen_von:e.controlling_employee_id,beschreibung:`Nachher – ${e.mitarbeiter_name}`});
+
+        // Fotos verbuchen (neues Format + Legacy-Kompatibilität)
+        const fotosArr = (e.fotos && Array.isArray(e.fotos) && e.fotos.length > 0)
+          ? e.fotos
+          : [
+              ...(e.foto_vorher  ? [{ url: e.foto_vorher,  label: "Vorher"  }] : []),
+              ...(e.foto_nachher ? [{ url: e.foto_nachher, label: "Nachher" }] : []),
+            ];
+
+        for (const f of fotosArr) {
+          await ctrlWrite("bs_fotos", { baustelle_id:e.controlling_baustelle_id, url:f.url, kategorie:f.label.toLowerCase(), datum:e.datum, hochgeladen_von:e.controlling_employee_id, beschreibung:`${f.label} – ${e.mitarbeiter_name}` });
+        }
       } else {
         const pre = e.typ==="ticket"?"Ticket":e.typ==="dguv"?"DGUV":"Sonstiges";
         await ctrlWrite("interne_stunden",{employee_id:e.controlling_employee_id,datum:e.datum,stunden:e.stunden,beschreibung:`${pre} – ${e.beschreibung||e.mitarbeiter_name}`});
@@ -620,6 +895,9 @@ function AdminDashboard({ onLogout }) {
           </div>
         ) : gefiltert.map(e => {
           const cfg = TYP[e.typ]||{}; const st = ST[e.status]||{};
+          let fotosArr = [];
+          if (e.fotos && Array.isArray(e.fotos) && e.fotos.length > 0) fotosArr = e.fotos;
+
           return (
             <div key={e.id} className="card fade" style={{ overflow:"hidden" }}>
               <div style={{ padding:"14px 16px" }}>
@@ -645,12 +923,9 @@ function AdminDashboard({ onLogout }) {
                 )}
                 {e.beschreibung && <p style={{ fontSize:13,color:C.text2,margin:"0 0 6px",lineHeight:1.5 }}>{e.beschreibung}</p>}
                 {e.material && <p style={{ fontSize:12,color:C.text3,margin:"0 0 6px" }}>📦 {e.material}{e.material_kosten?` — ${e.material_kosten}€`:""}</p>}
-                {(e.foto_vorher||e.foto_nachher) && (
-                  <div style={{ display:"grid",gridTemplateColumns:e.foto_vorher&&e.foto_nachher?"1fr 1fr":"1fr",gap:8,marginTop:10 }}>
-                    {e.foto_vorher  && <div><p style={{ fontSize:10,fontWeight:700,color:C.text3,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em" }}>Vorher</p>  <img src={e.foto_vorher}  alt="V" style={{ width:"100%",borderRadius:8,height:120,objectFit:"cover" }}/></div>}
-                    {e.foto_nachher && <div><p style={{ fontSize:10,fontWeight:700,color:C.green,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em" }}>Nachher</p> <img src={e.foto_nachher} alt="N" style={{ width:"100%",borderRadius:8,height:120,objectFit:"cover" }}/></div>}
-                  </div>
-                )}
+
+                <FotoAnzeige fotos={fotosArr} fotoVorher={e.foto_vorher} fotoNachher={e.foto_nachher} />
+
                 {e.admin_kommentar && <div style={{ marginTop:8,padding:"8px 12px",background:C.bg,borderRadius:8,fontSize:12,color:C.text2,borderLeft:`3px solid ${C.border2}` }}>💬 {e.admin_kommentar}</div>}
               </div>
 
@@ -699,4 +974,3 @@ export default function App() {
       {view === "admin"     && <AdminDashboard onLogout={logout} />}
     </div>
   );
-}
