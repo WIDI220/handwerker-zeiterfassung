@@ -276,7 +276,7 @@ function FotoAnzeige({ fotos, fotoVorher, fotoNachher, compact = false }) {
 // ═════════════════════════════════════════════════════════════
 // KALENDER VIEW
 // ═════════════════════════════════════════════════════════════
-function KalenderView({ eintraege, planung = [] }) {
+function KalenderView({ eintraege, planung = [], abwesenheit = [] }) {
   const [month, setMonth] = useState(() => {
     const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() };
   });
@@ -292,6 +292,9 @@ function KalenderView({ eintraege, planung = [] }) {
 
   const monatName = new Date(month.year, month.month, 1).toLocaleDateString("de-DE", { month:"long", year:"numeric" });
 
+  // NRW Feiertage für dieses und ggf. Nachbarjahr
+  const feiertage = { ...getNRWFeiertage(month.year) };
+
   // Eigene Einträge für diesen Monat
   const tageMap = {};
   eintraege.forEach(e => {
@@ -303,7 +306,7 @@ function KalenderView({ eintraege, planung = [] }) {
     }
   });
 
-  // Planungs-Einträge vom Vorgesetzten für diesen Monat
+  // Planungs-Einträge
   const planungMap = {};
   planung.forEach(p => {
     const d = new Date(p.datum);
@@ -314,32 +317,41 @@ function KalenderView({ eintraege, planung = [] }) {
     }
   });
 
-  // Kalender-Grid aufbauen
+  // Abwesenheiten (Urlaub / Krank)
+  const abwMap = {};
+  abwesenheit.forEach(a => {
+    const d = new Date(a.datum);
+    if (d.getFullYear() === month.year && d.getMonth() === month.month) {
+      abwMap[d.getDate()] = a; // pro Tag max. 1
+    }
+  });
+
+  // Kalender-Grid
   const ersterTag = new Date(month.year, month.month, 1);
   const letzterTag = new Date(month.year, month.month + 1, 0);
   let startDow = ersterTag.getDay() - 1;
   if (startDow < 0) startDow = 6;
-
   const cells = [];
   for (let i = 0; i < startDow; i++) cells.push(null);
   for (let d = 1; d <= letzterTag.getDate(); d++) cells.push(d);
 
   const today = new Date();
   const isToday = (d) => d === today.getDate() && month.month === today.getMonth() && month.year === today.getFullYear();
+  const isoDay = (d) => `${month.year}-${String(month.month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 
-  // Monats-Statistik
   const monatStunden = Object.values(tageMap).flat().reduce((s,e) => s + Number(e.stunden||0), 0);
-  const monatTage = Object.keys(tageMap).length;
+  const monatTage    = Object.keys(tageMap).length;
 
-  // Typ-Summen (nur eigene Buchungen)
   const typSummen = {};
   Object.values(tageMap).flat().forEach(e => {
     typSummen[e.typ] = (typSummen[e.typ] || 0) + Number(e.stunden || 0);
   });
 
   const [selectedDay, setSelectedDay] = useState(null);
-  const dayEntries  = selectedDay ? (tageMap[selectedDay]   || []) : [];
-  const dayPlanung  = selectedDay ? (planungMap[selectedDay] || []) : [];
+  const dayEntries = selectedDay ? (tageMap[selectedDay]    || []) : [];
+  const dayPlanung = selectedDay ? (planungMap[selectedDay] || []) : [];
+  const dayAbw     = selectedDay ? abwMap[selectedDay]              : null;
+  const dayFt      = selectedDay ? feiertage[isoDay(selectedDay)]   : null;
 
   return (
     <div style={{ padding:"16px 20px", paddingBottom:40 }}>
@@ -354,24 +366,34 @@ function KalenderView({ eintraege, planung = [] }) {
       </div>
 
       {/* Legende */}
-      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
-        {Object.keys(typSummen).length > 0 && Object.entries(typSummen).map(([typ, h]) => {
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
+        {Object.entries(typSummen).map(([typ, h]) => {
           const cfg = TYP[typ] || {};
           return (
-            <div key={typ} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", borderRadius:99, background:cfg.bg||C.bg, border:`1px solid ${cfg.color||C.border2}30` }}>
-              <span style={{ fontSize:12 }}>{ICONS[typ]}</span>
+            <div key={typ} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:99, background:cfg.bg||C.bg, border:`1px solid ${cfg.color||C.border2}30` }}>
+              <span style={{ fontSize:11 }}>{ICONS[typ]||"📋"}</span>
               <span style={{ fontSize:11, fontWeight:700, color:cfg.color||C.text2 }}>{cfg.label||typ}</span>
               <span style={{ fontSize:11, color:C.text3, fontWeight:600 }}>{h}h</span>
             </div>
           );
         })}
         {Object.keys(planungMap).length > 0 && (
-          <div style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", borderRadius:99, background:"#fff7ed", border:"1px solid #f59e0b30" }}>
-            <span style={{ fontSize:12 }}>📅</span>
+          <div style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:99, background:"#fff7ed", border:"1px solid #f59e0b30" }}>
+            <span style={{ fontSize:11 }}>📅</span>
             <span style={{ fontSize:11, fontWeight:700, color:C.amber }}>Planung</span>
-            <span style={{ fontSize:11, color:C.text3, fontWeight:600 }}>
-              {Object.values(planungMap).flat().reduce((s,p) => s+Number(p.stunden||0), 0)}h
-            </span>
+            <span style={{ fontSize:11, color:C.text3, fontWeight:600 }}>{Object.values(planungMap).flat().reduce((s,p) => s+Number(p.stunden||0), 0)}h</span>
+          </div>
+        )}
+        {Object.keys(abwMap).some(k => abwMap[k].typ === "urlaub") && (
+          <div style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:99, background:"#f0fdf4", border:"1px solid #10b98130" }}>
+            <span style={{ fontSize:11 }}>🏖️</span>
+            <span style={{ fontSize:11, fontWeight:700, color:C.green }}>Urlaub</span>
+          </div>
+        )}
+        {Object.keys(abwMap).some(k => abwMap[k].typ === "krank") && (
+          <div style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 9px", borderRadius:99, background:"#fef2f2", border:"1px solid #ef444430" }}>
+            <span style={{ fontSize:11 }}>🤒</span>
+            <span style={{ fontSize:11, fontWeight:700, color:C.red }}>Krank</span>
           </div>
         )}
       </div>
@@ -389,34 +411,59 @@ function KalenderView({ eintraege, planung = [] }) {
           if (!d) return <div key={`e${i}`} />;
           const entries  = tageMap[d]    || [];
           const geplant  = planungMap[d] || [];
+          const abw      = abwMap[d];
+          const ftName   = feiertage[isoDay(d)];
           const totalH   = entries.reduce((s,e) => s + Number(e.stunden||0), 0);
           const planH    = geplant.reduce((s,p) => s + Number(p.stunden||0), 0);
           const typen    = [...new Set(entries.map(e => e.typ))];
           const selected = selectedDay === d;
           const tod      = isToday(d);
-          const hasAny   = entries.length > 0 || geplant.length > 0;
+          const hasAny   = entries.length > 0 || geplant.length > 0 || abw || ftName;
+
+          // Hintergrundfarbe: Feiertag > Urlaub > Krank > normal
+          const cellBg = selected ? C.accent+"12"
+            : ftName   ? "#fef9c3"
+            : abw?.typ === "urlaub" ? "#f0fdf4"
+            : abw?.typ === "krank"  ? "#fef2f2"
+            : tod      ? C.accent+"08"
+            : hasAny   ? C.card
+            : "transparent";
+
+          const cellBorder = selected ? C.accent
+            : ftName         ? "#ca8a04"
+            : abw?.typ === "urlaub" ? C.green
+            : abw?.typ === "krank"  ? C.red
+            : tod            ? C.accent+"40"
+            : hasAny         ? C.border2
+            : "transparent";
 
           return (
             <button key={d} type="button" onClick={() => hasAny ? setSelectedDay(selected ? null : d) : null}
               style={{
-                padding:"6px 3px", borderRadius:10,
-                border:`1.5px solid ${selected ? C.accent : tod ? C.accent+"40" : hasAny ? C.border2 : "transparent"}`,
-                background: selected ? C.accent+"12" : tod ? C.accent+"08" : hasAny ? C.card : "transparent",
+                padding:"4px 2px", borderRadius:10,
+                border:`1.5px solid ${cellBorder}`,
+                background: cellBg,
                 cursor: hasAny ? "pointer" : "default",
-                display:"flex", flexDirection:"column", alignItems:"center", gap:2, minHeight:58,
-                transition:"all .12s",
+                display:"flex", flexDirection:"column", alignItems:"center", gap:1, minHeight:60,
+                transition:"all .12s", position:"relative", overflow:"hidden",
               }}>
-              <span style={{ fontSize:13, fontWeight: tod ? 800 : hasAny ? 700 : 400, color: tod ? C.accent : hasAny ? C.text : C.text3 }}>{d}</span>
+
+              {/* Feiertag-Streifen oben */}
+              {ftName && <div style={{ position:"absolute", top:0, left:0, right:0, height:3, background:"#ca8a04", borderRadius:"10px 10px 0 0" }} />}
+
+              <span style={{ fontSize:13, fontWeight: tod ? 800 : hasAny ? 700 : 400, color: tod ? C.accent : ftName ? "#92400e" : hasAny ? C.text : C.text3, marginTop: ftName ? 4 : 0 }}>{d}</span>
+
+              {/* Abwesenheits-Icon */}
+              {abw && <span style={{ fontSize:12, lineHeight:1 }}>{abw.typ === "urlaub" ? "🏖️" : "🤒"}</span>}
+
+              {/* Feiertag-Kürzel */}
+              {ftName && !abw && <span style={{ fontSize:8, fontWeight:700, color:"#92400e", textAlign:"center", lineHeight:1.2, padding:"0 2px", wordBreak:"break-word" }}>{ftName.slice(0,6)}</span>}
 
               {/* Eigene Stunden */}
-              {totalH > 0 && (
-                <span style={{ fontSize:10, fontWeight:700, color:selected ? C.accent : C.text2 }}>{totalH}h</span>
-              )}
+              {totalH > 0 && <span style={{ fontSize:10, fontWeight:700, color:selected ? C.accent : C.text2 }}>{totalH}h</span>}
 
-              {/* Geplante Stunden in Orange */}
-              {planH > 0 && (
-                <span style={{ fontSize:10, fontWeight:700, color:C.amber, background:"#fff7ed", borderRadius:4, padding:"1px 4px" }}>{planH}h</span>
-              )}
+              {/* Geplante Stunden */}
+              {planH > 0 && <span style={{ fontSize:10, fontWeight:700, color:C.amber, background:"#fff7ed", borderRadius:3, padding:"0 3px" }}>{planH}h</span>}
 
               {/* Typ-Punkte */}
               {typen.length > 0 && (
@@ -434,7 +481,7 @@ function KalenderView({ eintraege, planung = [] }) {
       </div>
 
       {/* Tag-Detail */}
-      {selectedDay && (dayEntries.length > 0 || dayPlanung.length > 0) && (
+      {selectedDay && (dayEntries.length > 0 || dayPlanung.length > 0 || dayAbw || dayFt) && (
         <div className="fade" style={{ marginTop:16, background:C.card, border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden" }}>
           <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:C.bg }}>
             <p style={{ fontSize:13, fontWeight:700, color:C.text, margin:0 }}>
@@ -446,19 +493,45 @@ function KalenderView({ eintraege, planung = [] }) {
             </p>
           </div>
 
-          {/* Planungs-Blöcke oben in Orange */}
+          {/* Feiertag */}
+          {dayFt && (
+            <div style={{ padding:"12px 16px", background:"#fefce8", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:20 }}>🎉</span>
+              <div>
+                <p style={{ fontSize:13, fontWeight:700, color:"#92400e", margin:0 }}>Feiertag (NRW)</p>
+                <p style={{ fontSize:12, color:"#a16207", margin:"2px 0 0" }}>{dayFt}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Abwesenheit */}
+          {dayAbw && (
+            <div style={{ padding:"12px 16px", background: dayAbw.typ === "urlaub" ? "#f0fdf4" : "#fef2f2", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:20 }}>{dayAbw.typ === "urlaub" ? "🏖️" : "🤒"}</span>
+              <div>
+                <p style={{ fontSize:13, fontWeight:700, color: dayAbw.typ === "urlaub" ? C.green : C.red, margin:0 }}>
+                  {dayAbw.typ === "urlaub" ? "Urlaub" : "Krank"}
+                </p>
+                {dayAbw.bemerkung && <p style={{ fontSize:12, color:C.text3, margin:"2px 0 0" }}>{dayAbw.bemerkung}</p>}
+              </div>
+            </div>
+          )}
+
+          {/* Planungs-Blöcke */}
           {dayPlanung.length > 0 && (
             <div style={{ borderBottom: dayEntries.length > 0 ? `1px solid ${C.border}` : "none" }}>
-              <div style={{ padding:"8px 16px 4px", display:"flex", alignItems:"center", gap:6 }}>
+              <div style={{ padding:"8px 16px 4px" }}>
                 <span style={{ fontSize:10, fontWeight:700, color:C.amber, textTransform:"uppercase", letterSpacing:".06em" }}>📅 Vom Vorgesetzten eingeplant</span>
               </div>
               {dayPlanung.map((p, i) => (
                 <div key={p.id} style={{ padding:"10px 16px", borderBottom: i < dayPlanung.length-1 ? `1px solid ${C.border}` : "none", background:"#fffbeb" }}>
                   <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                    <div style={{ width:32, height:32, borderRadius:8, background:"#fef3c7", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>📅</div>
+                    <div style={{ width:32, height:32, borderRadius:8, background:"#fef3c7", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>
+                      {ICONS[p.typ] || "📅"}
+                    </div>
                     <div style={{ flex:1 }}>
                       <span style={{ fontSize:13, fontWeight:700, color:"#92400e" }}>{p.bezeichnung}</span>
-                      <p style={{ fontSize:11, color:C.text3, margin:"2px 0 0" }}>Planung · {p.typ}</p>
+                      <p style={{ fontSize:11, color:C.text3, margin:"2px 0 0" }}>{TYP[p.typ]?.label || p.typ}</p>
                     </div>
                     <span style={{ fontSize:14, fontWeight:800, color:C.amber, flexShrink:0 }}>{p.stunden}h</span>
                   </div>
@@ -481,7 +554,7 @@ function KalenderView({ eintraege, planung = [] }) {
                 return (
                   <div key={e.id} style={{ padding:"12px 16px", borderBottom: i < dayEntries.length-1 ? `1px solid ${C.border}` : "none" }}>
                     <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                      <span style={{ fontSize:18 }}>{ICONS[e.typ]}</span>
+                      <span style={{ fontSize:18 }}>{ICONS[e.typ] || "📋"}</span>
                       <div style={{ flex:1 }}>
                         <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                           <span style={{ fontSize:13, fontWeight:700, color:cfg.color||C.text }}>{cfg.label||e.typ}</span>
@@ -726,18 +799,49 @@ function EintragCard({ e, onReload }) {
   );
 }
 
+// ── NRW Feiertage (Gauß-Algorithmus, kein API-Call) ───────────
+function getNRWFeiertage(year) {
+  const k  = Math.floor(year / 100);
+  const m  = 15 + Math.floor((3*k+3)/4) - Math.floor((8*k+13)/25);
+  const s  = 2 - Math.floor((3*k+3)/4);
+  const a  = year % 19;
+  const d  = (19*a+m) % 30;
+  const r  = Math.floor(d/29) + (Math.floor(d/28)-Math.floor(d/29)) * Math.floor(a/11);
+  const og = 21+d-r;
+  const sz = 7-(year+Math.floor(year/4)+s)%7;
+  const oe = 7-(og-sz)%7;
+  const os = og+oe;
+  const ostern = os<=31 ? new Date(year,2,os) : new Date(year,3,os-31);
+  const add = (dt,days) => { const x=new Date(dt); x.setDate(x.getDate()+days); return x; };
+  const fmt = (dt) => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  return {
+    [`${year}-01-01`]:"Neujahr",
+    [`${year}-01-06`]:"Heilige Drei Könige",
+    [`${year}-05-01`]:"Tag der Arbeit",
+    [`${year}-10-03`]:"Tag der Deutschen Einheit",
+    [`${year}-11-01`]:"Allerheiligen",
+    [`${year}-12-25`]:"1. Weihnachtstag",
+    [`${year}-12-26`]:"2. Weihnachtstag",
+    [fmt(add(ostern,-2))]:"Karfreitag",
+    [fmt(add(ostern, 1))]:"Ostermontag",
+    [fmt(add(ostern,39))]:"Christi Himmelfahrt",
+    [fmt(add(ostern,50))]:"Pfingstmontag",
+    [fmt(add(ostern,60))]:"Fronleichnam",
+  };
+}
+
 // ═════════════════════════════════════════════════════════════
 // MITARBEITER DASHBOARD
 // ═════════════════════════════════════════════════════════════
 function MitarbeiterDashboard({ user, onLogout }) {
-  const [mainView, setMainView]       = useState("list"); // "list" | "kalender" | "neu"
+  const [mainView, setMainView]   = useState("list");
   const [eintraege, setEintraege] = useState([]);
   const [planung, setPlanung]     = useState([]);
+  const [abwesenheit, setAbwesenheit] = useState([]);
   const [loading, setLoading]     = useState(true);
 
   const load = useCallback(() => {
     setLoading(true);
-    // 3 Monate zurück als Datumsgrenze für Planungseinträge
     const vonDatum = (() => {
       const d = new Date();
       d.setMonth(d.getMonth() - 3);
@@ -748,9 +852,13 @@ function MitarbeiterDashboard({ user, onLogout }) {
       user.controlling_employee_id
         ? ctrlRead(`wochenplanung?mitarbeiter_id=eq.${user.controlling_employee_id}&datum=gte.${vonDatum}&select=id,datum,typ,bezeichnung,stunden&order=datum.asc`)
         : Promise.resolve([]),
-    ]).then(([eintr, plan]) => {
+      user.controlling_employee_id
+        ? ctrlRead(`mitarbeiter_abwesenheiten?employee_id=eq.${user.controlling_employee_id}&datum=gte.${vonDatum}&select=id,datum,typ,bemerkung&order=datum.asc`)
+        : Promise.resolve([]),
+    ]).then(([eintr, plan, abw]) => {
       setEintraege(eintr || []);
       setPlanung(plan || []);
+      setAbwesenheit(abw || []);
     }).finally(() => setLoading(false));
   }, [user.controlling_employee_id]);
 
@@ -816,7 +924,7 @@ function MitarbeiterDashboard({ user, onLogout }) {
 
       {/* Content */}
       {mainView === "kalender" ? (
-        loading ? <Spinner /> : <KalenderView eintraege={eintraege} planung={planung} />
+        loading ? <Spinner /> : <KalenderView eintraege={eintraege} planung={planung} abwesenheit={abwesenheit} />
       ) : (
         <div style={{ padding:"16px 20px" }}>
           {loading ? <Spinner /> : eintraege.length === 0 ? (
