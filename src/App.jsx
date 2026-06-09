@@ -54,10 +54,14 @@ const C = {
   text:"#0f172a", text2:"#64748b", text3:"#94a3b8",
 };
 const TYP = {
-  baustelle: { label:"Baustelle", color:C.accent,  bg:"#eff6ff" },
-  ticket:    { label:"Ticket",    color:C.cyan,    bg:"#ecfeff" },
-  dguv:      { label:"DGUV",      color:C.green,   bg:"#f0fdf4" },
-  sonstiges: { label:"Sonstiges", color:C.purple,  bg:"#f5f3ff" },
+  baustelle: { label:"Baustelle",       color:C.accent,  bg:"#eff6ff" },
+  ticket:    { label:"Ticket",          color:C.cyan,    bg:"#ecfeff" },
+  tickets:   { label:"Tickets",         color:C.cyan,    bg:"#ecfeff" },
+  dguv:      { label:"DGUV",            color:C.green,   bg:"#f0fdf4" },
+  sonstiges: { label:"Sonstiges",       color:C.purple,  bg:"#f5f3ff" },
+  extern:    { label:"Ext. Ticket",     color:"#e11d48", bg:"#fff1f2" },
+  intern:    { label:"Intern",          color:C.purple,  bg:"#f5f3ff" },
+  begehung:  { label:"Begehung",        color:C.amber,   bg:"#fffbeb" },
 };
 const ST = {
   offen:     { label:"Offen",     bg:"#fffbeb", color:"#b45309" },
@@ -272,7 +276,7 @@ function FotoAnzeige({ fotos, fotoVorher, fotoNachher, compact = false }) {
 // ═════════════════════════════════════════════════════════════
 // KALENDER VIEW
 // ═════════════════════════════════════════════════════════════
-function KalenderView({ eintraege }) {
+function KalenderView({ eintraege, planung = [] }) {
   const [month, setMonth] = useState(() => {
     const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() };
   });
@@ -288,7 +292,7 @@ function KalenderView({ eintraege }) {
 
   const monatName = new Date(month.year, month.month, 1).toLocaleDateString("de-DE", { month:"long", year:"numeric" });
 
-  // Einträge für diesen Monat
+  // Eigene Einträge für diesen Monat
   const tageMap = {};
   eintraege.forEach(e => {
     const d = new Date(e.datum);
@@ -299,10 +303,20 @@ function KalenderView({ eintraege }) {
     }
   });
 
+  // Planungs-Einträge vom Vorgesetzten für diesen Monat
+  const planungMap = {};
+  planung.forEach(p => {
+    const d = new Date(p.datum);
+    if (d.getFullYear() === month.year && d.getMonth() === month.month) {
+      const key = d.getDate();
+      if (!planungMap[key]) planungMap[key] = [];
+      planungMap[key].push(p);
+    }
+  });
+
   // Kalender-Grid aufbauen
   const ersterTag = new Date(month.year, month.month, 1);
   const letzterTag = new Date(month.year, month.month + 1, 0);
-  // Montag = 0
   let startDow = ersterTag.getDay() - 1;
   if (startDow < 0) startDow = 6;
 
@@ -317,14 +331,15 @@ function KalenderView({ eintraege }) {
   const monatStunden = Object.values(tageMap).flat().reduce((s,e) => s + Number(e.stunden||0), 0);
   const monatTage = Object.keys(tageMap).length;
 
-  // Typ-Summen
+  // Typ-Summen (nur eigene Buchungen)
   const typSummen = {};
   Object.values(tageMap).flat().forEach(e => {
     typSummen[e.typ] = (typSummen[e.typ] || 0) + Number(e.stunden || 0);
   });
 
   const [selectedDay, setSelectedDay] = useState(null);
-  const dayEntries = selectedDay ? (tageMap[selectedDay] || []) : [];
+  const dayEntries  = selectedDay ? (tageMap[selectedDay]   || []) : [];
+  const dayPlanung  = selectedDay ? (planungMap[selectedDay] || []) : [];
 
   return (
     <div style={{ padding:"16px 20px", paddingBottom:40 }}>
@@ -333,26 +348,33 @@ function KalenderView({ eintraege }) {
         <button onClick={prevMonth} style={{ width:36, height:36, borderRadius:10, background:C.card, border:`1px solid ${C.border2}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, color:C.text2 }}>‹</button>
         <div style={{ textAlign:"center" }}>
           <p style={{ fontSize:16, fontWeight:800, color:C.text, margin:0 }}>{monatName}</p>
-          <p style={{ fontSize:11, color:C.text3, margin:"2px 0 0" }}>{monatStunden}h auf {monatTage} Tagen</p>
+          <p style={{ fontSize:11, color:C.text3, margin:"2px 0 0" }}>{monatStunden}h gebucht · {monatTage} Tage</p>
         </div>
         <button onClick={nextMonth} style={{ width:36, height:36, borderRadius:10, background:C.card, border:`1px solid ${C.border2}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, color:C.text2 }}>›</button>
       </div>
 
-      {/* Typ-Legende */}
-      {Object.keys(typSummen).length > 0 && (
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
-          {Object.entries(typSummen).map(([typ, h]) => {
-            const cfg = TYP[typ] || {};
-            return (
-              <div key={typ} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", borderRadius:99, background:cfg.bg||C.bg, border:`1px solid ${cfg.color||C.border2}30` }}>
-                <span style={{ fontSize:12 }}>{ICONS[typ]}</span>
-                <span style={{ fontSize:11, fontWeight:700, color:cfg.color||C.text2 }}>{cfg.label||typ}</span>
-                <span style={{ fontSize:11, color:C.text3, fontWeight:600 }}>{h}h</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {/* Legende */}
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+        {Object.keys(typSummen).length > 0 && Object.entries(typSummen).map(([typ, h]) => {
+          const cfg = TYP[typ] || {};
+          return (
+            <div key={typ} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", borderRadius:99, background:cfg.bg||C.bg, border:`1px solid ${cfg.color||C.border2}30` }}>
+              <span style={{ fontSize:12 }}>{ICONS[typ]}</span>
+              <span style={{ fontSize:11, fontWeight:700, color:cfg.color||C.text2 }}>{cfg.label||typ}</span>
+              <span style={{ fontSize:11, color:C.text3, fontWeight:600 }}>{h}h</span>
+            </div>
+          );
+        })}
+        {Object.keys(planungMap).length > 0 && (
+          <div style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", borderRadius:99, background:"#fff7ed", border:"1px solid #f59e0b30" }}>
+            <span style={{ fontSize:12 }}>📅</span>
+            <span style={{ fontSize:11, fontWeight:700, color:C.amber }}>Planung</span>
+            <span style={{ fontSize:11, color:C.text3, fontWeight:600 }}>
+              {Object.values(planungMap).flat().reduce((s,p) => s+Number(p.stunden||0), 0)}h
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* Wochentage Header */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:3, marginBottom:3 }}>
@@ -365,29 +387,45 @@ function KalenderView({ eintraege }) {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:3 }}>
         {cells.map((d, i) => {
           if (!d) return <div key={`e${i}`} />;
-          const entries = tageMap[d] || [];
-          const totalH = entries.reduce((s,e) => s + Number(e.stunden||0), 0);
-          const typen = [...new Set(entries.map(e => e.typ))];
+          const entries  = tageMap[d]    || [];
+          const geplant  = planungMap[d] || [];
+          const totalH   = entries.reduce((s,e) => s + Number(e.stunden||0), 0);
+          const planH    = geplant.reduce((s,p) => s + Number(p.stunden||0), 0);
+          const typen    = [...new Set(entries.map(e => e.typ))];
           const selected = selectedDay === d;
-          const tod = isToday(d);
+          const tod      = isToday(d);
+          const hasAny   = entries.length > 0 || geplant.length > 0;
 
           return (
-            <button key={d} type="button" onClick={() => setSelectedDay(selected ? null : d)}
+            <button key={d} type="button" onClick={() => hasAny ? setSelectedDay(selected ? null : d) : null}
               style={{
-                padding:"6px 3px", borderRadius:10, border:`1.5px solid ${selected ? C.accent : tod ? C.accent+"40" : entries.length ? C.border2 : "transparent"}`,
-                background: selected ? C.accent+"12" : tod ? C.accent+"08" : entries.length ? C.card : "transparent",
-                cursor: entries.length ? "pointer" : "default",
-                display:"flex", flexDirection:"column", alignItems:"center", gap:2, minHeight:54,
+                padding:"6px 3px", borderRadius:10,
+                border:`1.5px solid ${selected ? C.accent : tod ? C.accent+"40" : hasAny ? C.border2 : "transparent"}`,
+                background: selected ? C.accent+"12" : tod ? C.accent+"08" : hasAny ? C.card : "transparent",
+                cursor: hasAny ? "pointer" : "default",
+                display:"flex", flexDirection:"column", alignItems:"center", gap:2, minHeight:58,
                 transition:"all .12s",
               }}>
-              <span style={{ fontSize:13, fontWeight: tod ? 800 : entries.length ? 700 : 400, color: tod ? C.accent : entries.length ? C.text : C.text3 }}>{d}</span>
-              {totalH > 0 && <span style={{ fontSize:10, fontWeight:700, color:selected ? C.accent : C.text2 }}>{totalH}h</span>}
+              <span style={{ fontSize:13, fontWeight: tod ? 800 : hasAny ? 700 : 400, color: tod ? C.accent : hasAny ? C.text : C.text3 }}>{d}</span>
+
+              {/* Eigene Stunden */}
+              {totalH > 0 && (
+                <span style={{ fontSize:10, fontWeight:700, color:selected ? C.accent : C.text2 }}>{totalH}h</span>
+              )}
+
+              {/* Geplante Stunden in Orange */}
+              {planH > 0 && (
+                <span style={{ fontSize:10, fontWeight:700, color:C.amber, background:"#fff7ed", borderRadius:4, padding:"1px 4px" }}>{planH}h</span>
+              )}
+
+              {/* Typ-Punkte */}
               {typen.length > 0 && (
                 <div style={{ display:"flex", gap:2, flexWrap:"wrap", justifyContent:"center" }}>
                   {typen.slice(0,3).map(t => {
                     const cfg = TYP[t] || {};
-                    return <span key={t} style={{ width:6, height:6, borderRadius:"50%", background:cfg.color||C.text3, flexShrink:0 }} />;
+                    return <span key={t} style={{ width:5, height:5, borderRadius:"50%", background:cfg.color||C.text3, flexShrink:0 }} />;
                   })}
+                  {geplant.length > 0 && <span style={{ width:5, height:5, borderRadius:"50%", background:C.amber, flexShrink:0 }} />}
                 </div>
               )}
             </button>
@@ -396,37 +434,68 @@ function KalenderView({ eintraege }) {
       </div>
 
       {/* Tag-Detail */}
-      {selectedDay && dayEntries.length > 0 && (
+      {selectedDay && (dayEntries.length > 0 || dayPlanung.length > 0) && (
         <div className="fade" style={{ marginTop:16, background:C.card, border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden" }}>
           <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:C.bg }}>
             <p style={{ fontSize:13, fontWeight:700, color:C.text, margin:0 }}>
               {new Date(month.year, month.month, selectedDay).toLocaleDateString("de-DE", { weekday:"long", day:"2-digit", month:"long" })}
             </p>
             <p style={{ fontSize:11, color:C.text3, margin:"2px 0 0" }}>
-              {dayEntries.reduce((s,e) => s+Number(e.stunden||0), 0)}h · {dayEntries.length} Eintrag{dayEntries.length !== 1 ? "e" : ""}
+              {dayEntries.reduce((s,e) => s+Number(e.stunden||0), 0)}h gebucht
+              {dayPlanung.length > 0 && ` · ${dayPlanung.reduce((s,p) => s+Number(p.stunden||0), 0)}h geplant`}
             </p>
           </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
-            {dayEntries.map((e, i) => {
-              const cfg = TYP[e.typ] || {};
-              const st  = ST[e.status] || {};
-              return (
-                <div key={e.id} style={{ padding:"12px 16px", borderBottom: i < dayEntries.length-1 ? `1px solid ${C.border}` : "none" }}>
+
+          {/* Planungs-Blöcke oben in Orange */}
+          {dayPlanung.length > 0 && (
+            <div style={{ borderBottom: dayEntries.length > 0 ? `1px solid ${C.border}` : "none" }}>
+              <div style={{ padding:"8px 16px 4px", display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ fontSize:10, fontWeight:700, color:C.amber, textTransform:"uppercase", letterSpacing:".06em" }}>📅 Vom Vorgesetzten eingeplant</span>
+              </div>
+              {dayPlanung.map((p, i) => (
+                <div key={p.id} style={{ padding:"10px 16px", borderBottom: i < dayPlanung.length-1 ? `1px solid ${C.border}` : "none", background:"#fffbeb" }}>
                   <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                    <span style={{ fontSize:18 }}>{ICONS[e.typ]}</span>
+                    <div style={{ width:32, height:32, borderRadius:8, background:"#fef3c7", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>📅</div>
                     <div style={{ flex:1 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                        <span style={{ fontSize:13, fontWeight:700, color:cfg.color||C.text }}>{cfg.label||e.typ}</span>
-                        <Badge label={st.label} color={st.color} bg={st.bg} />
-                      </div>
-                      {e.beschreibung && <p style={{ fontSize:12, color:C.text2, margin:"2px 0 0", lineHeight:1.4 }}>{e.beschreibung}</p>}
+                      <span style={{ fontSize:13, fontWeight:700, color:"#92400e" }}>{p.bezeichnung}</span>
+                      <p style={{ fontSize:11, color:C.text3, margin:"2px 0 0" }}>Planung · {p.typ}</p>
                     </div>
-                    <span style={{ fontSize:14, fontWeight:800, color:C.text, flexShrink:0 }}>{e.stunden}h</span>
+                    <span style={{ fontSize:14, fontWeight:800, color:C.amber, flexShrink:0 }}>{p.stunden}h</span>
                   </div>
                 </div>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          )}
+
+          {/* Eigene Buchungen */}
+          {dayEntries.length > 0 && (
+            <div>
+              {dayPlanung.length > 0 && (
+                <div style={{ padding:"8px 16px 4px" }}>
+                  <span style={{ fontSize:10, fontWeight:700, color:C.text3, textTransform:"uppercase", letterSpacing:".06em" }}>✅ Deine Buchungen</span>
+                </div>
+              )}
+              {dayEntries.map((e, i) => {
+                const cfg = TYP[e.typ] || {};
+                const st  = ST[e.status] || {};
+                return (
+                  <div key={e.id} style={{ padding:"12px 16px", borderBottom: i < dayEntries.length-1 ? `1px solid ${C.border}` : "none" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                      <span style={{ fontSize:18 }}>{ICONS[e.typ]}</span>
+                      <div style={{ flex:1 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                          <span style={{ fontSize:13, fontWeight:700, color:cfg.color||C.text }}>{cfg.label||e.typ}</span>
+                          <Badge label={st.label} color={st.color} bg={st.bg} />
+                        </div>
+                        {e.beschreibung && <p style={{ fontSize:12, color:C.text2, margin:"2px 0 0", lineHeight:1.4 }}>{e.beschreibung}</p>}
+                      </div>
+                      <span style={{ fontSize:14, fontWeight:800, color:C.text, flexShrink:0 }}>{e.stunden}h</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -663,12 +732,26 @@ function EintragCard({ e, onReload }) {
 function MitarbeiterDashboard({ user, onLogout }) {
   const [mainView, setMainView]       = useState("list"); // "list" | "kalender" | "neu"
   const [eintraege, setEintraege] = useState([]);
+  const [planung, setPlanung]     = useState([]);
   const [loading, setLoading]     = useState(true);
 
   const load = useCallback(() => {
     setLoading(true);
-    appApi(`zeiteintraege?controlling_employee_id=eq.${user.controlling_employee_id}&order=datum.desc&limit=200`)
-      .then(setEintraege).finally(() => setLoading(false));
+    // 3 Monate zurück als Datumsgrenze für Planungseinträge
+    const vonDatum = (() => {
+      const d = new Date();
+      d.setMonth(d.getMonth() - 3);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;
+    })();
+    Promise.all([
+      appApi(`zeiteintraege?controlling_employee_id=eq.${user.controlling_employee_id}&order=datum.desc&limit=500`),
+      user.controlling_employee_id
+        ? ctrlRead(`wochenplanung?mitarbeiter_id=eq.${user.controlling_employee_id}&datum=gte.${vonDatum}&select=id,datum,typ,bezeichnung,stunden&order=datum.asc`)
+        : Promise.resolve([]),
+    ]).then(([eintr, plan]) => {
+      setEintraege(eintr || []);
+      setPlanung(plan || []);
+    }).finally(() => setLoading(false));
   }, [user.controlling_employee_id]);
 
   useEffect(() => { load(); }, [load]);
@@ -733,7 +816,7 @@ function MitarbeiterDashboard({ user, onLogout }) {
 
       {/* Content */}
       {mainView === "kalender" ? (
-        loading ? <Spinner /> : <KalenderView eintraege={eintraege} />
+        loading ? <Spinner /> : <KalenderView eintraege={eintraege} planung={planung} />
       ) : (
         <div style={{ padding:"16px 20px" }}>
           {loading ? <Spinner /> : eintraege.length === 0 ? (
