@@ -991,7 +991,11 @@ function AdminDashboard({ onLogout }) {
             ];
 
         for (const f of fotosArr) {
-          await ctrlWrite("bs_fotos", { baustelle_id:e.controlling_baustelle_id, url:f.url, kategorie:f.label.toLowerCase(), datum:e.datum, hochgeladen_von:e.controlling_employee_id, beschreibung:`${f.label} – ${e.mitarbeiter_name}` });
+          try {
+            await ctrlWrite("bs_fotos", { baustelle_id:e.controlling_baustelle_id, url:f.url, kategorie:f.label.toLowerCase(), datum:e.datum, hochgeladen_von:e.controlling_employee_id, beschreibung:`${f.label} – ${e.mitarbeiter_name}` });
+          } catch(fotoErr) {
+            console.warn('Foto konnte nicht verbucht werden:', f.url, fotoErr.message);
+          }
         }
       } else {
         const pre = e.typ==="ticket"?"Ticket":e.typ==="dguv"?"DGUV":"Sonstiges";
