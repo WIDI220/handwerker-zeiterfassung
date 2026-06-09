@@ -974,3 +974,4 @@ export default function App() {
       {view === "admin"     && <AdminDashboard onLogout={logout} />}
     </div>
   );
+}
