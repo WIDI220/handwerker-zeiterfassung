@@ -4,8 +4,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
-const APP_URL  = "https://syhjjuewkjjihxwiexmz.supabase.co";
-const APP_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5aGpqdWV3a2pqaWh4d2lleG16Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1MTk2NDYsImV4cCI6MjA5MzA5NTY0Nn0.9A-GrkU72IZ3uxkypX5GttN4EXNv46aX4uOY4wUmfaE";
+const APP_URL  = "https://uclsqnpqvphdbeutzzuu.supabase.co";
+const APP_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjbHNxbnBxdnBoZGJldXR6enV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxODUzNjQsImV4cCI6MjA4Nzc2MTM2NH0.qpWW_Bx4Lddkf3YEPeVwv0yRU_leRwakojcdfGBELs4";
 const CTRL_URL = "https://uclsqnpqvphdbeutzzuu.supabase.co";
 const CTRL_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjbHNxbnBxdnBoZGJldXR6enV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxODUzNjQsImV4cCI6MjA4Nzc2MTM2NH0.qpWW_Bx4Lddkf3YEPeVwv0yRU_leRwakojcdfGBELs4";
 
@@ -677,7 +677,7 @@ function NeuerEintrag({ user, onSuccess, onCancel }) {
         }
       }
 
-      await appApi("zeiteintraege", { method:"POST", body:JSON.stringify({
+      await appApi("hw_zeiteintraege", { method:"POST", body:JSON.stringify({
         controlling_employee_id: user.controlling_employee_id,
         mitarbeiter_name: user.name,
         controlling_baustelle_id: form.baustelle_id || null,
@@ -848,7 +848,7 @@ function MitarbeiterDashboard({ user, onLogout }) {
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;
     })();
     Promise.all([
-      appApi(`zeiteintraege?controlling_employee_id=eq.${user.controlling_employee_id}&order=datum.desc&limit=500`),
+      appApi(`hw_zeiteintraege?controlling_employee_id=eq.${user.controlling_employee_id}&order=datum.desc&limit=500`),
       user.controlling_employee_id
         ? ctrlRead(`wochenplanung?mitarbeiter_id=eq.${user.controlling_employee_id}&datum=gte.${vonDatum}&select=id,datum,typ,bezeichnung,stunden&order=datum.asc`)
         : Promise.resolve([]),
@@ -959,7 +959,7 @@ function AdminDashboard({ onLogout }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setEintraege(await appApi("zeiteintraege?order=erstellt_am.desc&limit=300")); }
+    try { setEintraege(await appApi("hw_zeiteintraege?order=erstellt_am.desc&limit=300")); }
     finally { setLoading(false); }
   }, []);
 
@@ -969,7 +969,7 @@ function AdminDashboard({ onLogout }) {
   }, []);
 
   const action = async (id, status) => {
-    await appApi(`zeiteintraege?id=eq.${id}`, { method:"PATCH", body:JSON.stringify({ status, admin_kommentar:kommentar[id]||null, bearbeitet_am:new Date().toISOString() }) });
+    await appApi(`hw_zeiteintraege?id=eq.${id}`, { method:"PATCH", body:JSON.stringify({ status, admin_kommentar:kommentar[id]||null, bearbeitet_am:new Date().toISOString() }) });
     setKommentar(k => { const n={...k}; delete n[id]; return n; });
     load();
   };
@@ -1001,7 +1001,7 @@ function AdminDashboard({ onLogout }) {
         const pre = e.typ==="ticket"?"Ticket":e.typ==="dguv"?"DGUV":"Sonstiges";
         await ctrlWrite("interne_stunden",{employee_id:e.controlling_employee_id,datum:e.datum,stunden:e.stunden,beschreibung:`${pre} – ${e.beschreibung||e.mitarbeiter_name}`});
       }
-      await appApi(`zeiteintraege?id=eq.${e.id}`,{method:"PATCH",body:JSON.stringify({status:"verbucht",bearbeitet_am:new Date().toISOString()})});
+      await appApi(`hw_zeiteintraege?id=eq.${e.id}`,{method:"PATCH",body:JSON.stringify({status:"verbucht",bearbeitet_am:new Date().toISOString()})});
       setVerbId(null); load();
     } catch(er) { setVerbErr(er.message); }
     finally { setVerbLoad(false); }
