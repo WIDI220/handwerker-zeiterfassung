@@ -12,39 +12,102 @@ const CTRL_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 const MAX_FOTOS = 10;
 const FOTO_LABELS = ["Vorher", "Nachher", "Detail", "Schaden", "Fertig", "Beleg", "Sonstiges"];
 
+// ── Auth (Supabase Auth, Token im Browser) ─────────────────────
+const SESSION_KEY = "handwerker_v5_session";
+const AUTH_KEY    = "handwerker_v5_auth";
+const readAuth    = () => { try { const s = localStorage.getItem(AUTH_KEY); return s ? JSON.parse(s) : null; } catch { return null; } };
+const writeAuth   = (a) => localStorage.setItem(AUTH_KEY, JSON.stringify(a));
+const clearAuth   = () => localStorage.removeItem(AUTH_KEY);
+const saveSession = (u) => localStorage.setItem(SESSION_KEY, JSON.stringify(u));
+const loadSession = () => { try { if (!readAuth()) return null; const s = localStorage.getItem(SESSION_KEY); return s ? JSON.parse(s) : null; } catch { return null; } };
+const clearSession = () => { localStorage.removeItem(SESSION_KEY); clearAuth(); };
+
+// E-Mail-Adresse aus dem Benutzernamen (muss zur SQL-Funktion hw_email passen)
+const hwEmail = async (benutzername) => {
+  const bytes = new TextEncoder().encode(benutzername.trim().toLowerCase());
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return hex.slice(0, 40) + "@hw.invalid";
+};
+const storeTokens = (j) => writeAuth({
+  access_token: j.access_token,
+  refresh_token: j.refresh_token,
+  expires_at: j.expires_at || (Math.floor(Date.now() / 1000) + (j.expires_in || 3600)),
+});
+const hwLogin = async (benutzername, passwort) => {
+  const email = await hwEmail(benutzername);
+  const res = await fetch(`${APP_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST", headers: { apikey: APP_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: "hw-" + passwort }),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = String(j.error_description || j.msg || j.message || "");
+    if (res.status === 429) throw new Error("Zu viele Versuche – bitte kurz warten");
+    if (/banned/i.test(msg)) throw new Error("Zugang ist deaktiviert");
+    throw new Error("Benutzername oder Passwort falsch");
+  }
+  storeTokens(j);
+  return j.user;
+};
+let refreshPromise = null;
+const getToken = async () => {
+  const a = readAuth();
+  if (!a) return null;
+  if (a.expires_at * 1000 - Date.now() > 60000) return a.access_token;
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      try {
+        const res = await fetch(`${APP_URL}/auth/v1/token?grant_type=refresh_token`, {
+          method: "POST", headers: { apikey: APP_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: a.refresh_token }),
+        });
+        if (!res.ok) { clearSession(); return null; }
+        const j = await res.json();
+        storeTokens(j);
+        return j.access_token;
+      } catch { return a.access_token; }
+      finally { refreshPromise = null; }
+    })();
+  }
+  return refreshPromise;
+};
+const authHeaders = async () => {
+  const t = await getToken();
+  return { apikey: APP_KEY, Authorization: `Bearer ${t || APP_KEY}` };
+};
+const sessionAbgelaufen = () => { clearSession(); window.location.reload(); };
+
 // ── API helpers ───────────────────────────────────────────────
 const appApi = async (path, options = {}) => {
   const res = await fetch(`${APP_URL}/rest/v1/${path}`, {
-    headers: { apikey: APP_KEY, Authorization: `Bearer ${APP_KEY}`, "Content-Type": "application/json", Prefer: options.prefer || "return=representation", ...options.headers },
+    headers: { ...(await authHeaders()), "Content-Type": "application/json", Prefer: options.prefer || "return=representation", ...options.headers },
     ...options,
   });
+  if (res.status === 401) { sessionAbgelaufen(); throw new Error("Sitzung abgelaufen"); }
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "Fehler"); }
   if (res.status === 204) return null;
   return res.json();
 };
 const ctrlRead = async (path) => {
-  const res = await fetch(`${CTRL_URL}/rest/v1/${path}`, { headers: { apikey: CTRL_KEY, Authorization: `Bearer ${CTRL_KEY}`, "Content-Type": "application/json" } });
+  const res = await fetch(`${CTRL_URL}/rest/v1/${path}`, { headers: { ...(await authHeaders()), "Content-Type": "application/json" } });
+  if (res.status === 401) { sessionAbgelaufen(); throw new Error("Sitzung abgelaufen"); }
   if (!res.ok) throw new Error("Fehler beim Laden");
   return res.json();
 };
 const ctrlWrite = async (path, body, options = {}) => {
-  const res = await fetch(`${CTRL_URL}/rest/v1/${path}`, { method: options.method || "POST", headers: { apikey: CTRL_KEY, Authorization: `Bearer ${CTRL_KEY}`, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(body) });
+  const res = await fetch(`${CTRL_URL}/rest/v1/${path}`, { method: options.method || "POST", headers: { ...(await authHeaders()), "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(body) });
+  if (res.status === 401) { sessionAbgelaufen(); throw new Error("Sitzung abgelaufen"); }
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "Fehler"); }
   return res.status === 204 ? null : res.json();
 };
 const uploadFoto = async (file, userId) => {
   const ext = file.name.split(".").pop();
   const path = `${userId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-  const res = await fetch(`${APP_URL}/storage/v1/object/fotos/${path}`, { method: "POST", headers: { apikey: APP_KEY, Authorization: `Bearer ${APP_KEY}`, "Content-Type": file.type }, body: file });
+  const res = await fetch(`${APP_URL}/storage/v1/object/fotos/${path}`, { method: "POST", headers: { ...(await authHeaders()), "Content-Type": file.type }, body: file });
   if (!res.ok) throw new Error("Foto Upload fehlgeschlagen");
   return `${APP_URL}/storage/v1/object/public/fotos/${path}`;
 };
-
-// ── Session ───────────────────────────────────────────────────
-const SESSION_KEY = "handwerker_v4_session";
-const saveSession = (u) => localStorage.setItem(SESSION_KEY, JSON.stringify(u));
-const loadSession = () => { try { const s = localStorage.getItem(SESSION_KEY); return s ? JSON.parse(s) : null; } catch { return null; } };
-const clearSession = () => localStorage.removeItem(SESSION_KEY);
 
 // ── Design tokens ─────────────────────────────────────────────
 const C = {
@@ -590,15 +653,13 @@ function LoginScreen({ onLogin }) {
     if (!u.trim() || !p.trim()) return setErr("Bitte alle Felder ausfüllen");
     setLoad(true); setErr("");
     try {
-      const logins = await ctrlRead(`handwerker_logins?benutzername=eq.${encodeURIComponent(u.trim())}&aktiv=eq.true&select=id,name,benutzername,passwort,employee_id`);
-      if (!logins?.length) return setErr("Benutzername nicht gefunden oder deaktiviert");
-      const login = logins[0];
-      if (login.passwort !== p) return setErr("Passwort falsch");
+      const user = await hwLogin(u, p);
+      const meta = user?.app_metadata || {};
       const sess = {
-        id:   login.id,
-        name: login.name || login.benutzername,
+        id:   meta.login_id || user.id,
+        name: meta.name || u.trim(),
         rolle: "handwerker",
-        controlling_employee_id: login.employee_id || null,
+        controlling_employee_id: meta.employee_id || null,
       };
       saveSession(sess); onLogin(sess);
     } catch (er) { setErr("Fehler: " + er.message); }
@@ -979,7 +1040,7 @@ function AdminDashboard({ onLogout }) {
     setVerbLoad(true); setVerbErr("");
     try {
       if (e.typ === "baustelle" && e.controlling_baustelle_id) {
-        const r = await fetch(`${CTRL_URL}/rest/v1/bs_stundeneintraege`, { method:"POST", headers:{apikey:CTRL_KEY,Authorization:`Bearer ${CTRL_KEY}`,"Content-Type":"application/json",Prefer:"return=minimal"}, body:JSON.stringify({baustelle_id:e.controlling_baustelle_id,mitarbeiter_id:e.controlling_employee_id,datum:e.datum,stunden:e.stunden,beschreibung:e.beschreibung||`App: ${e.mitarbeiter_name}`}) });
+        const r = await fetch(`${CTRL_URL}/rest/v1/bs_stundeneintraege`, { method:"POST", headers:{...(await authHeaders()),"Content-Type":"application/json",Prefer:"return=minimal"}, body:JSON.stringify({baustelle_id:e.controlling_baustelle_id,mitarbeiter_id:e.controlling_employee_id,datum:e.datum,stunden:e.stunden,beschreibung:e.beschreibung||`App: ${e.mitarbeiter_name}`}) });
         if (!r.ok) throw new Error("Fehler beim Schreiben");
 
         // Fotos verbuchen (neues Format + Legacy-Kompatibilität)
